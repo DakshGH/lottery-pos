@@ -1,0 +1,24 @@
+{
+  "name": "lottery-pos-desktop",
+  "version": "0.1.0",
+  "description": "Desktop (Electron) wrapper for Lottery POS.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "copy": "node copy-app.js",
+    "dist": "node copy-app.js && electron-builder",
+    "pack": "node copy-app.js && electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lotterypos.app",
+    "productName": "Lottery POS",
+    "files": ["main.js", "app/**/*"],
+    "directories": { "output": "dist" },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage", "deb"], "category": "Office" }
+  }
+}

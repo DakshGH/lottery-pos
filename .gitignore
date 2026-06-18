@@ -1,0 +1,7 @@
+node_modules/
+desktop/node_modules/
+desktop/app/
+desktop/dist/
+*.log
+lottery-backup-*.json
+.DS_Store

@@ -1,0 +1,11 @@
+{
+  "name": "lottery-pos",
+  "version": "0.1.0",
+  "description": "Scratch-off lottery inventory & cash-reconciliation app for store owners (Windows / Linux).",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test/engine.test.js"
+  }
+}

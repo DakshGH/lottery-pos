@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lottery POS — Scratch-Off Tracker</title>
+  <link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+  <div id="app" class="app"><div class="main"><div class="empty-state">Loading…</div></div></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toasts"></div>
+
+  <!-- Core logic (order matters: dependencies first) -->
+  <script src="data/games.seed.js"></script>
+  <script src="src/core/engine.js"></script>
+  <script src="src/core/barcode.js"></script>
+  <script src="src/core/games.js"></script>
+  <script src="src/core/storage.js"></script>
+  <script src="src/core/store.js"></script>
+  <!-- UI -->
+  <script src="src/ui/scanner.js"></script>
+  <script src="src/ui/app.js"></script>
+</body>
+</html>
