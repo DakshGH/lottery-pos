@@ -26,6 +26,12 @@
   function todayISO() {
     return new Date().toISOString().slice(0, 10);
   }
+  // Local "YYYY-MM-DDTHH:MM" (not UTC) so dates/times match the clerk's clock.
+  function nowLocalISO() {
+    const d = new Date();
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
 
   function defaultState(seedCatalog) {
     return {
@@ -122,6 +128,9 @@
     function listSoldOut() {
       return Object.values(state.packs).filter((p) => p.status === 'soldout');
     }
+    function listTrash() {
+      return Object.values(state.packs).filter((p) => p.status === 'trash');
+    }
     function getPack(id) {
       return state.packs[id] || null;
     }
@@ -136,7 +145,7 @@
     function addToInventory(parsed) {
       const g = lookupGame(parsed.gameNumber);
       const existing = findPackByKey(parsed.packKey);
-      if (existing && existing.status !== 'soldout') {
+      if (existing && existing.status !== 'soldout' && existing.status !== 'trash') {
         return { ok: false, error: 'Duplicate: that pack is already in ' +
           (existing.status === 'active' ? 'a bin.' : 'inventory.') };
       }
@@ -161,12 +170,36 @@
       return { ok: true, pack: pack };
     }
 
+    // Soft-delete: an inventory pack goes to Trash (recoverable), not gone.
     function removePackFromInventory(packId) {
       const p = getPack(packId);
       if (p && p.status === 'inventory') {
-        delete state.packs[packId];
+        p._prevStatus = 'inventory';
+        p.status = 'trash';
+        p.trashedAt = new Date().toISOString();
         persist();
       }
+    }
+    function restoreFromTrash(packId) {
+      const p = getPack(packId);
+      if (p && p.status === 'trash') {
+        // only restore if its (game,pack) isn't live again
+        const live = Object.values(state.packs).find(
+          (q) => q.packKey === p.packKey && q.id !== p.id && (q.status === 'inventory' || q.status === 'active')
+        );
+        if (live) throw new Error('That pack number is already active again.');
+        p.status = 'inventory';
+        delete p.trashedAt;
+        persist();
+      }
+    }
+    function deletePackForever(packId) {
+      const p = getPack(packId);
+      if (p && p.status === 'trash') { delete state.packs[packId]; persist(); }
+    }
+    function emptyTrash() {
+      listTrash().forEach((p) => { delete state.packs[p.id]; });
+      persist();
     }
 
     /**
@@ -344,6 +377,25 @@
       return pack;
     }
 
+    /** Swap the entire contents (pack + today's segments) of two bins. */
+    function swapBins(aId, bId) {
+      if (aId === bId) return;
+      if (!getBin(aId) || !getBin(bId)) throw new Error('Bin not found.');
+      const a = activePackInBin(aId);
+      const b = activePackInBin(bId);
+      if (!a && !b) throw new Error('Both bins are empty.');
+      if (a) a.binId = bId;
+      if (b) b.binId = aId;
+      const day = currentDay();
+      if (day) {
+        const da = day.bins[aId];
+        const db = day.bins[bId];
+        if (db) day.bins[aId] = db; else delete day.bins[aId];
+        if (da) day.bins[bId] = da; else delete day.bins[bId];
+      }
+      persist();
+    }
+
     function makeSegment(pack, startIdx) {
       return {
         packId: pack.id,
@@ -377,11 +429,13 @@
      * Start a new day. Copies each bin's active pack + its carried index into a
      * fresh day record as the starting segment.
      */
-    function startDay(dateISO) {
+    function startDay(whenLocal) {
       if (isInDay()) throw new Error('A day is already open. End it first.');
+      const w = (whenLocal && whenLocal.length >= 16) ? whenLocal : nowLocalISO();
       const day = {
         id: uid('day'),
-        date: dateISO || todayISO(),
+        date: w.slice(0, 10),
+        startTime: w.slice(11, 16),
         state: 'in-day',
         bins: {},
         fullPacks: [],
@@ -441,6 +495,7 @@
       day.computed = engine.computeDay(day);
       day.state = 'closed';
       day.closedAt = new Date().toISOString();
+      day.endTime = nowLocalISO().slice(11, 16);
       // carry each bin's ending index onto its pack for tomorrow
       for (const binId of Object.keys(day.bins)) {
         const segs = day.bins[binId].segments;
@@ -608,16 +663,21 @@
       listInventory,
       listActive,
       listSoldOut,
+      listTrash,
       getPack,
       findPackByKey,
       addToInventory,
       removePackFromInventory,
+      restoreFromTrash,
+      deletePackForever,
+      emptyTrash,
       activatePack,
       markSoldOut,
       sellFullPack,
       reverseActivation,
       reverseSoldOut,
       movePack,
+      swapBins,
       // day
       currentDay,
       isInDay,

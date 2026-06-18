@@ -78,5 +78,31 @@
     return String(gameNumber) + '-' + String(packNumber);
   }
 
-  return { parse, packKey, DEFAULT_WIDTHS };
+  /**
+   * Parse just the game + pack (index ignored / optional). Used for inventory,
+   * where a fresh pack has no meaningful ticket index. Accepts either a full
+   * barcode (from a camera scan) or a game-pack-only string (manual entry).
+   */
+  function parsePack(raw, widths) {
+    widths = widths || DEFAULT_WIDTHS;
+    if (raw == null) return fail('Empty');
+    const s = String(raw).trim();
+    if (!s) return fail('Empty');
+    if (s.indexOf('-') !== -1) {
+      const parts = s.split('-').map((p) => p.replace(/\D/g, ''));
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        return { ok: true, gameNumber: parts[0], packNumber: parts[1], packKey: parts[0] + '-' + parts[1] };
+      }
+    }
+    const digits = s.replace(/\D/g, '');
+    const need = widths.game + widths.pack;
+    if (digits.length < need) {
+      return fail('Expected at least ' + need + ' digits (game + pack).');
+    }
+    const game = digits.slice(0, widths.game);
+    const pack = digits.slice(widths.game, need);
+    return { ok: true, gameNumber: game, packNumber: pack, packKey: game + '-' + pack };
+  }
+
+  return { parse, parsePack, packKey, DEFAULT_WIDTHS };
 });

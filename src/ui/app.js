@@ -19,6 +19,7 @@
     return v < 0 ? '-' + s : s;
   };
   const todayISO = () => new Date().toISOString().slice(0, 10);
+  const nowLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 
   const ICON = {
     scan: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8"/></svg>',
@@ -96,6 +97,12 @@
       POS.games.fetchCatalog(url).then((cat) => { if (cat) store.setCatalog(cat); });
     }
     window.addEventListener('hashchange', () => render());
+    // subscription / anti-theft: lock the app if the license server says so
+    if (POS.license) {
+      POS.license.onChange(renderLockScreen);
+      POS.license.start();
+      renderLockScreen(POS.license.status());
+    }
     document.addEventListener('click', onClick);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
     document.addEventListener('keydown', (e) => {
@@ -153,6 +160,29 @@
   function renderMain() {
     const m = $('.main');
     if (m) m.innerHTML = viewHTML(currentView());
+  }
+
+  // Full-screen lock when the subscription is invalid/expired.
+  function renderLockScreen(s) {
+    let el = document.getElementById('lock-screen');
+    if (!s || !s.locked) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'lock-screen'; el.className = 'lock-screen'; document.body.appendChild(el); }
+    const msg = s.mode === 'expired' ? 'Your subscription has expired. Renew to continue.'
+      : s.mode === 'invalid' ? 'This license key is not valid for this device.'
+      : 'Could not verify your subscription. Connect to the internet, or enter a valid key.';
+    el.innerHTML =
+      '<div class="lock-card"><div class="brand" style="justify-content:center;min-width:0;margin-bottom:6px"><div class="logo">' + ICON.logo + '</div></div>' +
+      '<h2>Subscription required</h2><p class="muted">' + esc(msg) + '</p>' +
+      '<div class="field"><label>License key</label><input id="lk-key" value="' + esc(s.key || '') + '" placeholder="LP-XXXX-XXXX"></div>' +
+      '<div class="field"><label>License server URL</label><input id="lk-url" value="' + esc(s.serverUrl || '') + '" placeholder="https://your-server/validate"></div>' +
+      '<button class="btn primary block lg" id="lk-go">Activate &amp; verify</button>' +
+      '<p class="muted" style="font-size:12px;margin-top:14px">Device ID: <span class="mono">' + esc(s.deviceId) + '</span></p></div>';
+    el.querySelector('#lk-go').onclick = async () => {
+      POS.license.setConfig(el.querySelector('#lk-url').value, el.querySelector('#lk-key').value);
+      const r = await POS.license.check();
+      if (r.locked) toast('Still locked', r.lastError || 'Key or server rejected', 'err');
+      else toast('Activated', 'Subscription verified', 'ok');
+    };
   }
 
   function initials() {
@@ -303,6 +333,7 @@
           '<button class="btn sm" data-action="activate" data-bin="' + bin.id + '">New pack</button>' +
           '<button class="btn sm" data-action="full-pack-active" data-pack="' + pack.id + '">Sold-out (full)</button>' +
           moveOutBtn(bin.id) +
+          swapBtn(bin.id) +
           '<button class="btn ghost sm" data-action="reverse-activation" data-pack="' + pack.id + '">Undo activate</button>' +
         '</div></div>';
     }).join('');
@@ -314,6 +345,10 @@
     if (!empties.length) return '';
     return '<button class="btn ghost sm" data-action="move-pack" data-bin="' + binId + '">Move</button>';
   }
+  function swapBtn(binId) {
+    if (store.listBins().length < 2) return '';
+    return '<button class="btn ghost sm" data-action="swap-bin" data-bin="' + binId + '">Swap</button>';
+  }
   function moveIntoBtn() { return ''; }
 
   // ---- INVENTORY ---------------------------------------------------------
@@ -323,7 +358,9 @@
     let head =
       '<div class="page-head"><h1>Inventory</h1>' +
         '<span class="sub">' + inv.length + (searchQuery ? ' of ' + all.length : '') + ' unactivated pack' + (inv.length === 1 ? '' : 's') + '</span>' +
-        '<div class="actions"><button class="btn primary" data-action="add-inventory">' + ICON.cam + ' Add delivery</button></div></div>';
+        '<div class="actions">' +
+          (store.listTrash().length ? '<button class="btn ghost" data-action="open-trash">Trash (' + store.listTrash().length + ')</button>' : '') +
+          '<button class="btn primary" data-action="add-inventory">' + ICON.cam + ' Add delivery</button></div></div>';
     if (!all.length) {
       return head + '<div class="empty-state"><div class="big">' + ICON.box + '</div><h3>Inventory is empty</h3>' +
         '<p>When a delivery arrives, scan each pack to load it in.</p>' +
@@ -385,11 +422,12 @@
       return head + '<div class="empty-state"><div class="big">' + ICON.history + '</div><h3>No days recorded</h3>' +
         '<p>Start and end a day to build history. Past days can be edited and changes cascade forward.</p></div>';
     }
-    return head + '<table class="tbl"><thead><tr><th>Date</th><th>Status</th><th class="num">Scratch $</th><th class="num">Online $</th><th class="num">Register $</th><th></th></tr></thead><tbody>' +
+    return head + '<table class="tbl"><thead><tr><th>Date</th><th>Hours</th><th>Status</th><th class="num">Scratch $</th><th class="num">Online $</th><th class="num">Register $</th><th></th></tr></thead><tbody>' +
       days.map((d) => {
         const c = d.computed || engine.computeDay(d);
         return '<tr>' +
           '<td class="mono">' + esc(d.date) + '</td>' +
+          '<td class="mono muted">' + esc(dayHours(d)) + '</td>' +
           '<td>' + (d.state === 'closed' ? '<span class="chip gray">closed</span>' : '<span class="chip green">in-day</span>') + '</td>' +
           '<td class="num">' + money(c.scratchSales) + '</td>' +
           '<td class="num">' + money(c.onlineSales) + '</td>' +
@@ -399,6 +437,13 @@
       }).join('') + '</tbody></table>';
   }
 
+  function dayHours(d) {
+    const s = d.startTime || '';
+    const e = d.endTime || (d.state === 'closed' ? '' : 'now');
+    if (!s && !e) return '—';
+    return (s || '—') + '–' + (e || '—');
+  }
+
   let openDayId = null;
   function viewDayDetail() {
     const d = store.getDay(openDayId);
@@ -406,8 +451,9 @@
     const c = d.computed || engine.computeDay(d);
     let head = '<div class="page-head"><button class="btn ghost sm" data-action="nav-history">← History</button>' +
       '<h1>' + esc(d.date) + '</h1>' +
-      '<span class="sub">' + (d.state === 'closed' ? 'closed' : 'in-day') + '</span>' +
-      '<div class="actions"><button class="btn" data-action="recompute">Recompute cascade</button></div></div>';
+      '<span class="sub">' + esc(dayHours(d)) + ' · ' + (d.state === 'closed' ? 'closed' : 'in-day') + '</span>' +
+      '<div class="actions"><button class="btn" data-action="export-day-pdf" data-day="' + d.id + '">Export PDF</button>' +
+        '<button class="btn" data-action="recompute">Recompute cascade</button></div></div>';
 
     let rows = '';
     store.listBins().forEach((bin) => {
@@ -457,7 +503,8 @@
   function viewReports() {
     if (!reportRange) reportRange = defaultWeek();
     const r = store.rangeReport(reportRange.start, reportRange.end);
-    let head = '<div class="page-head"><h1>Reports</h1><span class="sub">aggregate over a date range</span></div>';
+    let head = '<div class="page-head"><h1>Reports</h1><span class="sub">aggregate over a date range</span>' +
+      '<div class="actions"><button class="btn" data-action="export-report-pdf">Export PDF</button></div></div>';
     const controls = '<div class="card flex gap center wrap" style="margin-bottom:20px">' +
       '<div class="field" style="margin:0"><label>From</label><input type="date" id="rep-start" value="' + esc(reportRange.start) + '"></div>' +
       '<div class="field" style="margin:0"><label>To</label><input type="date" id="rep-end" value="' + esc(reportRange.end) + '"></div>' +
@@ -480,6 +527,76 @@
   }
   function totbox(label, n, kind) {
     return '<div class="totbox ' + (kind || '') + '"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
+  }
+
+  // ---- PDF export (via the browser's print -> "Save as PDF") --------------
+  const PRINT_CSS =
+    'body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px;font-size:13px}' +
+    'h1{font-size:20px;margin:0 0 2px}.meta{color:#666;margin-bottom:18px;font-size:12px}' +
+    'table{width:100%;border-collapse:collapse;margin:10px 0 18px}' +
+    'th,td{border-bottom:1px solid #ddd;padding:7px 9px;text-align:left}' +
+    'th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#666}' +
+    '.num{text-align:right;font-variant-numeric:tabular-nums}' +
+    '.tot{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee}' +
+    '.tot.grand{font-weight:700;font-size:16px;border-bottom:none;border-top:2px solid #111;margin-top:6px;padding-top:10px}' +
+    '.foot{margin-top:24px;color:#999;font-size:11px}@media print{body{margin:14px}}';
+  function printReport(title, inner) {
+    const w = window.open('', '_blank');
+    if (!w) { toast('Popup blocked', 'Allow popups for this site to export PDF', 'warn'); return; }
+    const store_ = store.getState().settings.storeName || 'Lottery POS';
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(title) +
+      '</title><style>' + PRINT_CSS + '</style></head><body>' + inner +
+      '<div class="foot">' + esc(store_) + ' · generated ' + esc(nowLocal().replace('T', ' ')) +
+      ' · use your browser\'s "Save as PDF"</div></body></html>');
+    w.document.close(); w.focus();
+    setTimeout(() => { try { w.print(); } catch (e) {} }, 350);
+  }
+  function exportDayPDF(dayId) {
+    const d = store.getDay(dayId); if (!d) return;
+    const c = d.computed || engine.computeDay(d);
+    let rows = '';
+    store.listBins().forEach((bin) => {
+      const bd = d.bins[bin.id]; if (!bd) return;
+      bd.segments.forEach((seg, si) => {
+        const sold = engine.segmentTicketsSold(seg);
+        rows += '<tr><td>' + esc(bin.name) + (bd.segments.length > 1 ? ' #' + (si + 1) : '') + '</td><td>' + esc(seg.name || seg.gameNumber) +
+          '</td><td class="num">' + seg.startIndex + '</td><td class="num">' + (seg.completed ? seg.ticketsPerPack + ' (out)' : seg.endIndex) +
+          '</td><td class="num">' + sold + '</td><td class="num">$' + (sold * (seg.price || 0)) + '</td></tr>';
+      });
+    });
+    const inner =
+      '<h1>Daily Report — ' + esc(d.date) + '</h1>' +
+      '<div class="meta">' + esc(store.getState().settings.storeName || '') + ' · hours ' + esc(dayHours(d)) + ' · ' + (d.state === 'closed' ? 'closed' : 'in-day') + '</div>' +
+      '<table><thead><tr><th>Bin</th><th>Game</th><th class="num">Start</th><th class="num">End</th><th class="num">Tickets</th><th class="num">Amount</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="6">No bin activity.</td></tr>') + '</tbody></table>' +
+      '<div class="tot"><span>Scratch ticket sales</span><span>' + money(c.scratchTicketAmount) + '</span></div>' +
+      (c.fullPackAmount ? '<div class="tot"><span>Full-pack sales</span><span>' + money(c.fullPackAmount) + '</span></div>' : '') +
+      '<div class="tot"><span>Online sales</span><span>' + money(c.onlineSales) + '</span></div>' +
+      '<div class="tot"><span>Online cashes</span><span>-' + money(c.onlineCashes) + '</span></div>' +
+      '<div class="tot"><span>Scratch cashes</span><span>-' + money(c.scratchCashes) + '</span></div>' +
+      '<div class="tot grand"><span>Cash in register</span><span>' + money(c.registerCash) + '</span></div>';
+    printReport('Daily Report ' + d.date, inner);
+  }
+  function exportRangePDF() {
+    const r = store.rangeReport(reportRange.start, reportRange.end);
+    let rows = '';
+    r.days.forEach((d) => {
+      const c = d.computed || engine.computeDay(d);
+      rows += '<tr><td>' + esc(d.date) + '</td><td>' + esc(dayHours(d)) + '</td><td class="num">' + money(c.scratchSales) +
+        '</td><td class="num">' + money(c.onlineSales) + '</td><td class="num">' + money(c.registerCash) + '</td></tr>';
+    });
+    const inner =
+      '<h1>Sales Report</h1>' +
+      '<div class="meta">' + esc(store.getState().settings.storeName || '') + ' · ' + esc(r.startISO) + ' to ' + esc(r.endISO) + ' · ' + r.dayCount + ' day(s)</div>' +
+      '<table><thead><tr><th>Date</th><th>Hours</th><th class="num">Scratch $</th><th class="num">Online $</th><th class="num">Register $</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="5">No closed days in range.</td></tr>') + '</tbody></table>' +
+      '<div class="tot"><span>Total scratch sales</span><span>' + money(r.scratchSales) + '</span></div>' +
+      '<div class="tot"><span>Online sales</span><span>' + money(r.online) + '</span></div>' +
+      '<div class="tot"><span>Online cashes</span><span>-' + money(r.onlineCash) + '</span></div>' +
+      '<div class="tot"><span>Scratch cashes</span><span>-' + money(r.scratchCash) + '</span></div>' +
+      '<div class="tot"><span>Sold-out packs</span><span>' + r.soldOutPackCount + ' (' + money(r.soldOutPackValue) + ')</span></div>' +
+      '<div class="tot grand"><span>Register cash collected</span><span>' + money(r.register) + '</span></div>';
+    printReport('Sales Report ' + r.startISO + ' to ' + r.endISO, inner);
   }
 
   // ---- SETTINGS ----------------------------------------------------------
@@ -508,14 +625,36 @@
       '<table class="tbl"><thead><tr><th>Game #</th><th>Name</th><th class="num">Price</th><th class="num">Tickets</th><th></th></tr></thead><tbody>' + gamesRows + '</tbody></table>' +
       '<div style="margin-top:12px"><button class="btn" data-action="define-game">+ Add game</button></div></div>';
 
-    const backup = '<div class="card"><div class="section-title" style="margin-top:0">Backup &amp; data</div>' +
+    const backup = '<div class="card" style="margin-bottom:18px"><div class="section-title" style="margin-top:0">Backup &amp; data</div>' +
       '<p class="muted">Data is stored on this device. Export regularly to keep a safe copy. New here? Load a sample store to explore.</p>' +
       '<div class="flex gap wrap"><button class="btn primary" data-action="load-demo">Load sample data</button>' +
         '<button class="btn" data-action="export-backup">Export backup</button>' +
         '<button class="btn" data-action="import-backup">Import backup</button>' +
         '<button class="btn danger" data-action="reset-all">Reset all data</button></div></div>';
 
-    return head + general + gamesCard + backup;
+    return head + general + gamesCard + licenseCard() + backup;
+  }
+
+  function licenseCard() {
+    const L = POS.license ? POS.license.status() : { mode: 'unlicensed', deviceId: '—' };
+    const modeChip = {
+      active: '<span class="chip green">Active</span>',
+      grace: '<span class="chip amber">Active (offline)</span>',
+      expired: '<span class="chip red">Expired</span>',
+      invalid: '<span class="chip red">Invalid key</span>',
+      unverified: '<span class="chip amber">Unverified</span>',
+      unlicensed: '<span class="chip gray">Trial / unlicensed</span>',
+    }[L.mode] || '';
+    const until = L.validUntil ? new Date(L.validUntil).toISOString().slice(0, 10) : '—';
+    return '<div class="card" style="margin-bottom:18px"><div class="section-title" style="margin-top:0">License &amp; subscription</div>' +
+      '<div class="kv"><span class="k">Status</span><span class="v">' + modeChip + '</span></div>' +
+      '<div class="kv"><span class="k">Plan</span><span class="v">' + esc(L.plan || '—') + '</span></div>' +
+      '<div class="kv"><span class="k">Valid until</span><span class="v">' + esc(until) + '</span></div>' +
+      '<div class="kv"><span class="k">Device ID</span><span class="v mono">' + esc(L.deviceId) + '</span></div>' +
+      '<div class="field" style="margin-top:14px"><label>License key</label><input id="lic-key" value="' + esc(L.key || '') + '" placeholder="LP-XXXX-XXXX"></div>' +
+      '<div class="field"><label>License server URL</label><input id="lic-url" value="' + esc(L.serverUrl || '') + '" placeholder="https://your-server/validate (leave blank for trial)"><div class="hint">When set, the app verifies the subscription every 15 minutes and locks if it expires or is revoked.</div></div>' +
+      '<div class="flex gap wrap"><button class="btn primary" data-action="save-license">Activate / verify</button>' +
+        '<button class="btn" data-action="deactivate-license">Clear license</button></div></div>';
   }
 
   // ===================================================================== //
@@ -549,13 +688,18 @@
       case 'activate': return activateFlow(d.bin);
       case 'activate-pack': return activatePackFlow(d.pack);
       case 'move-pack': return movePackFlow(d.bin);
+      case 'swap-bin': return swapBinFlow(d.bin);
       case 'update-index': return updateIndexFlow(d.bin);
       case 'reverse-activation': store.reverseActivation(d.pack); return toast('Activation undone', 'Pack returned to inventory', 'ok');
       case 'full-pack-active': return fullPackFlow(d.pack);
       case 'full-pack-inv': return fullPackFlow(d.pack);
       // inventory
       case 'add-inventory': return addInventoryFlow();
-      case 'remove-inv': store.removePackFromInventory(d.pack); return;
+      case 'remove-inv': store.removePackFromInventory(d.pack); toast('Moved to Trash', 'Restore it from Trash if needed', 'ok'); return;
+      case 'open-trash': return trashFlow();
+      case 'restore-trash': store.restoreFromTrash(d.pack); toast('Restored', '', 'ok'); trashFlow(); return;
+      case 'delete-forever': store.deletePackForever(d.pack); trashFlow(); return;
+      case 'empty-trash': store.emptyTrash(); closeModal(); toast('Trash emptied', '', 'ok'); return;
       case 'define-game': return defineGameFlow(d.game);
       // soldout
       case 'reverse-soldout': store.reverseSoldOut(d.pack); return toast('Reversed', 'Pack restored', 'ok');
@@ -566,9 +710,13 @@
       // reports
       case 'run-report': reportRange = { start: $('#rep-start').value, end: $('#rep-end').value }; return render();
       case 'report-this-week': reportRange = defaultWeek(); return render();
+      case 'export-report-pdf': return exportRangePDF();
+      case 'export-day-pdf': return exportDayPDF(d.day);
       // settings
       case 'save-settings': return saveSettings();
       case 'refresh-games': return refreshGames();
+      case 'save-license': return saveLicense();
+      case 'deactivate-license': POS.license.deactivateLocal(); render(); return toast('License cleared', 'Running in trial mode', 'ok');
       case 'export-backup': store.exportBackup(); return toast('Exported', 'Backup downloaded', 'ok');
       case 'import-backup': return importBackupFlow();
       case 'load-demo': return loadDemoFlow();
@@ -579,9 +727,20 @@
 
   // ---- quick scan --------------------------------------------------------
   function widths() { return store.getState().settings.barcodeWidths; }
+  function fullMask() { const w = widths(); return [w.game, w.pack, w.index]; }
+  function packMask() { const w = widths(); return [w.game, w.pack]; }
+  // Restrict an input to digits (optionally capped) — for index/number fields.
+  function onlyDigits(input, maxLen) {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      let v = input.value.replace(/\D/g, '');
+      if (maxLen) v = v.slice(0, maxLen);
+      input.value = v;
+    });
+  }
 
   async function quickScanFlow() {
-    const raw = await POS.scanner.scanOnce({ title: 'Scan ticket' });
+    const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
     if (!raw) return;
     const parsed = barcode.parse(raw, widths());
     if (!parsed.ok) { toast('Bad scan', parsed.error, 'err'); return; }
@@ -703,7 +862,7 @@
         const readyEl = root.querySelector('#act-ready');
         let scannedPackId = null;
         root.querySelector('#act-scanbtn').onclick = async () => {
-          const raw = await POS.scanner.scanOnce({ title: 'Scan new pack' });
+          const raw = await POS.scanner.scanOnce({ title: 'Scan new pack', mask: fullMask() });
           if (!raw) return;
           const parsed = barcode.parse(raw, widths());
           if (!parsed.ok) return toast('Bad scan', parsed.error, 'err');
@@ -771,6 +930,51 @@
     });
   }
 
+  // Swap the entire contents of two bins (tickets of A and B exchange places).
+  function swapBinFlow(fromBinId) {
+    const from = store.getBin(fromBinId);
+    const others = store.listBins().filter((b) => b.id !== fromBinId);
+    if (!others.length) return toast('Need two bins', 'Add another bin first', 'warn');
+    const opts = others.map((b) => {
+      const p = store.activePackInBin(b.id);
+      return '<option value="' + b.id + '">' + esc(b.name) + (p ? ' — ' + esc(p.name) : ' (empty)') + '</option>';
+    }).join('');
+    const fp = store.activePackInBin(fromBinId);
+    openModal({
+      title: 'Swap ' + esc(from.name),
+      bodyHTML:
+        '<p class="muted">Exchanges the entire contents of two bins — ' + esc(from.name) +
+          (fp ? ' (' + esc(fp.name) + ')' : ' (empty)') + ' and the bin you pick below trade places.</p>' +
+        '<div class="field"><label>Swap with</label><select id="sw-to">' + opts + '</select></div>',
+      footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="sw-go">Swap bins</button>',
+      onMount: (root) => {
+        root.querySelector('#sw-go').onclick = () => {
+          store.swapBins(fromBinId, root.querySelector('#sw-to').value);
+          closeModal(); toast('Swapped', 'Bin contents exchanged', 'ok');
+        };
+      },
+    });
+  }
+
+  function trashFlow() {
+    const items = store.listTrash().slice().reverse();
+    const body = items.length
+      ? '<div class="list">' + items.map((p) =>
+          '<div class="list-item"><div class="grow"><div class="title">' + esc(p.name) +
+            ' <span class="muted mono">' + esc(p.packKey) + '</span></div>' +
+            '<div class="sub">deleted ' + esc((p.trashedAt || '').slice(0, 10)) + '</div></div>' +
+          '<button class="btn sm" data-action="restore-trash" data-pack="' + p.id + '">Restore</button>' +
+          '<button class="btn danger sm" data-action="delete-forever" data-pack="' + p.id + '">Delete forever</button>' +
+          '</div>').join('') + '</div>'
+      : '<div class="empty-state" style="padding:30px"><div class="big">' + ICON.box + '</div><h3>Trash is empty</h3><p>Removed inventory packs land here so a misclick is recoverable.</p></div>';
+    openModal({
+      title: 'Trash',
+      bodyHTML: body,
+      footHTML: (items.length ? '<button class="btn danger" data-action="empty-trash">Empty trash</button>' : '') +
+        '<button class="btn primary" data-action="close-modal">Done</button>',
+    });
+  }
+
   function updateIndexFlow(binId) {
     const pack = store.activePackInBin(binId);
     if (!pack) return;
@@ -782,8 +986,9 @@
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="ui-go">Save</button>',
       onMount: (root) => {
         const idx = root.querySelector('#ui-idx');
+        onlyDigits(idx, 3);
         root.querySelector('#ui-scanbtn').onclick = async () => {
-          const raw = await POS.scanner.scanOnce({ title: 'Scan ticket' });
+          const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
           if (!raw) return;
           const parsed = barcode.parse(raw, widths());
           if (!parsed.ok) return toast('Bad scan', parsed.error, 'err');
@@ -818,10 +1023,11 @@
     // Camera scanner stays open; each scanned pack is added & logged in-place.
     POS.scanner.openContinuous({
       title: 'Add delivery — scan each pack',
-      hint: 'or type / hardware-scan each pack, then Enter',
+      hint: 'or type game-pack, then Enter',
+      mask: packMask(), // game + pack only; no ticket index needed for inventory
       onResult: (raw) => {
-        const parsed = barcode.parse(raw, widths());
-        if (!parsed.ok) return { kind: 'err', title: 'Bad scan', msg: parsed.error };
+        const parsed = barcode.parsePack(raw, widths());
+        if (!parsed.ok) return { kind: 'err', title: 'Invalid', msg: parsed.error };
         const g = store.lookupGame(parsed.gameNumber);
         const res = store.addToInventory(parsed);
         if (!res.ok) return { kind: 'warn', title: 'Duplicate skipped', msg: parsed.packKey };
@@ -847,6 +1053,7 @@
         '</select></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="g-go">Save game</button>',
       onMount: (root) => {
+        onlyDigits(root.querySelector('#g-num'), widths().game);
         root.querySelector('#g-go').onclick = () => {
           const num = root.querySelector('#g-num').value.trim();
           const name = root.querySelector('#g-name').value.trim();
@@ -868,7 +1075,7 @@
         '<p class="muted">This recalculates the day and cascades the change into later days where the same pack continues.</p>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="seg-go">Save</button>',
       onMount: (root) => {
-        const inp = root.querySelector('#seg-val'); inp.focus(); inp.select();
+        const inp = root.querySelector('#seg-val'); onlyDigits(inp, 3); inp.focus(); inp.select();
         root.querySelector('#seg-go').onclick = () => {
           const patch = {}; patch[field] = parseInt(inp.value, 10) || 0;
           store.editSegment(dayId, binId, segIndex, patch);
@@ -895,13 +1102,13 @@
     openModal({
       title: 'Start day',
       bodyHTML:
-        '<div class="field"><label>Date</label><input type="date" id="sd-date" value="' + todayISO() + '"></div>' +
+        '<div class="field"><label>Date &amp; time</label><input type="datetime-local" id="sd-date" value="' + nowLocal() + '"></div>' +
         '<p class="muted">' + (last ? 'Carrying over ending indexes from <b>' + esc(last.date) + '</b>. ' : '') +
           active.length + ' active pack' + (active.length === 1 ? '' : 's') + ' across ' + bins.length + ' bin' + (bins.length === 1 ? '' : 's') + '.</p>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn green" id="sd-go">Start day</button>',
       onMount: (root) => {
         root.querySelector('#sd-go').onclick = () => {
-          store.startDay(root.querySelector('#sd-date').value || todayISO());
+          store.startDay(root.querySelector('#sd-date').value || nowLocal());
           closeModal(); toast('Day started', 'Sell away — scan bins at end of day', 'ok'); go('bins');
         };
       },
@@ -937,6 +1144,7 @@
         '<div id="ed-preview" class="card"></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn green lg" id="ed-go">Close day</button>',
       onMount: (root) => {
+        root.querySelectorAll('.ed-end').forEach((inp) => onlyDigits(inp, 3));
         const recompute = () => {
           // write end indexes into the live day for preview
           root.querySelectorAll('.ed-end').forEach((inp) => {
@@ -957,6 +1165,7 @@
         root.querySelector('#ed-scanbtn').onclick = () => {
           POS.scanner.openContinuous({
             title: 'Scan bins',
+            mask: fullMask(),
             onResult: (raw) => {
               const parsed = barcode.parse(raw, widths());
               if (!parsed.ok) return { kind: 'err', title: 'Bad scan', msg: parsed.error };
@@ -1005,6 +1214,15 @@
     POS.games.fetchCatalog(url).then((cat) => {
       if (cat) { store.setCatalog(cat); toast('Catalog updated', Object.keys(cat.games).length + ' games', 'ok'); }
       else toast('Refresh failed', 'Could not load that URL', 'err');
+    });
+  }
+  function saveLicense() {
+    POS.license.setConfig($('#lic-url').value, $('#lic-key').value);
+    POS.license.check().then((r) => {
+      render();
+      if (!r.serverUrl) toast('Trial mode', 'No server set — enforcement off', 'ok');
+      else if (r.locked) toast('Not verified', r.lastError || 'Key/server rejected', 'err');
+      else toast('Verified', 'Subscription active', 'ok');
     });
   }
   function importBackupFlow() {

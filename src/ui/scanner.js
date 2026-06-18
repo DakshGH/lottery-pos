@@ -139,6 +139,30 @@
       overlay.remove();
     }
 
+    // restrict manual entry to digits, auto-inserting dashes per the mask
+    const mask = opts.mask && opts.mask.length ? opts.mask : null;
+    function format(raw) {
+      let digits = String(raw).replace(/\D/g, '');
+      if (!mask) return digits; // digits only when no segment mask
+      const total = mask.reduce((a, b) => a + b, 0);
+      digits = digits.slice(0, total);
+      const out = [];
+      let i = 0;
+      for (let s = 0; s < mask.length && i < digits.length; s++) {
+        out.push(digits.slice(i, i + mask[s]));
+        i += mask[s];
+      }
+      return out.join('-');
+    }
+    input.addEventListener('input', () => {
+      const start = input.selectionStart, before = input.value;
+      const f = format(input.value);
+      input.value = f;
+      // keep caret near the end on reformat
+      if (f.length !== before.length) input.setSelectionRange(input.value.length, input.value.length);
+      else input.setSelectionRange(start, start);
+    });
+
     // wire controls
     overlay.querySelector('[data-x]').onclick = () => { cleanup(); handle.resolve(null); };
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) { cleanup(); handle.resolve(null); } });

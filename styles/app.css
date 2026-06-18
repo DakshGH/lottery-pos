@@ -290,6 +290,13 @@ table.tbl .editable:hover { background: var(--accent-soft); }
 .toast .t-title { font-weight: 600; margin-bottom: 1px; font-size: 13px; }
 .toast .t-msg { color: var(--text-dim); font-size: 12.5px; }
 
+/* ---- license lock screen ---- */
+.lock-screen { position: fixed; inset: 0; background: var(--bg); display: grid; place-items: center; z-index: 200; padding: 20px; }
+.lock-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 26px 24px; text-align: center; box-shadow: var(--shadow-lg); }
+.lock-card h2 { margin: 6px 0 4px; font-size: 18px; }
+.lock-card p { margin: 0 0 16px; font-size: 13px; }
+.lock-card .field { text-align: left; }
+
 /* ============================================================================
    Camera scanner overlay
    ========================================================================== */
