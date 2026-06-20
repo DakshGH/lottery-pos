@@ -134,8 +134,16 @@
     function getPack(id) {
       return state.packs[id] || null;
     }
+    // Prefer the "live" pack for a key (active > inventory > soldout > trash) so
+    // identify/dedupe behave correctly even if a pack number was reused.
     function findPackByKey(packKey) {
-      return Object.values(state.packs).find((p) => p.packKey === packKey) || null;
+      const rank = { active: 0, inventory: 1, soldout: 2, trash: 3 };
+      let best = null;
+      for (const p of Object.values(state.packs)) {
+        if (p.packKey !== packKey) continue;
+        if (!best || (rank[p.status] != null ? rank[p.status] : 9) < (rank[best.status] != null ? rank[best.status] : 9)) best = p;
+      }
+      return best;
     }
 
     /**
@@ -279,7 +287,16 @@
         const segs = day.bins[binId].segments;
         const open = segs[segs.length - 1];
         if (open && open.packId === pack.id && !open.completed) {
-          open.completed = true;
+          if (opts.reason === 'fullpack') {
+            // Customer bought the REMAINING tickets as a lump (counted in
+            // fullPacks above). The segment should count only what was sold
+            // loose today (start -> currentIndex), not the whole pack, or the
+            // remainder would be double-counted.
+            open.endIndex = clampIndex(pack.currentIndex || open.startIndex, open.ticketsPerPack);
+          } else {
+            // normal rollover: pack ran to the end through loose sales
+            open.completed = true;
+          }
         }
       }
 

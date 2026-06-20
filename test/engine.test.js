@@ -114,6 +114,22 @@ test('Day 2 totals match spec (incl. full pack)', () => {
   assert.strictEqual(c.registerCash, 100, 'register 100');
 });
 
+// ---- full pack of an active, partially-sold pack -------------------------
+// The store closes the segment at currentIndex (not completed) and adds the
+// remainder as a full-pack sale, so the remainder is not double-counted.
+
+test('full-pack sale of an active pack is not double counted', () => {
+  const day = {
+    bins: { b: { segments: [{ packKey: 'P', price: 20, ticketsPerPack: 20, startIndex: 0, endIndex: 6 }] } },
+    fullPacks: [{ price: 20, ticketsPerPack: 20, indexAtSale: 6 }],
+    report: {},
+  };
+  const c = engine.computeDay(day);
+  assert.strictEqual(c.scratchTicketAmount, 120, 'loose 6*20');
+  assert.strictEqual(c.fullPackAmount, 280, 'remainder 14*20');
+  assert.strictEqual(c.scratchSales, 400, 'whole pack 20*20, counted once');
+});
+
 // ---- cascade -------------------------------------------------------------
 
 test('editing day1 end cascades into day2 start', () => {

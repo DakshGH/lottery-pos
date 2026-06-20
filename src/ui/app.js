@@ -176,6 +176,9 @@
       '<div class="field"><label>License key</label><input id="lk-key" value="' + esc(s.key || '') + '" placeholder="LP-XXXX-XXXX"></div>' +
       '<div class="field"><label>License server URL</label><input id="lk-url" value="' + esc(s.serverUrl || '') + '" placeholder="https://your-server/validate"></div>' +
       '<button class="btn primary block lg" id="lk-go">Activate &amp; verify</button>' +
+      // Escape hatch only when the app was NEVER successfully verified (i.e. a
+      // setup typo / no server) — an expired or revoked license cannot bypass.
+      (s.mode === 'unverified' ? '<button class="btn ghost block" id="lk-trial" style="margin-top:8px">Continue in trial mode</button>' : '') +
       '<p class="muted" style="font-size:12px;margin-top:14px">Device ID: <span class="mono">' + esc(s.deviceId) + '</span></p></div>';
     el.querySelector('#lk-go').onclick = async () => {
       POS.license.setConfig(el.querySelector('#lk-url').value, el.querySelector('#lk-key').value);
@@ -183,6 +186,8 @@
       if (r.locked) toast('Still locked', r.lastError || 'Key or server rejected', 'err');
       else toast('Activated', 'Subscription verified', 'ok');
     };
+    const trial = el.querySelector('#lk-trial');
+    if (trial) trial.onclick = () => { POS.license.deactivateLocal(); toast('Trial mode', 'License cleared', 'ok'); };
   }
 
   function initials() {
@@ -738,6 +743,16 @@
       input.value = v;
     });
   }
+  // Restrict to a money amount: digits and a single decimal point.
+  function moneyInput(input) {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      let v = input.value.replace(/[^0-9.]/g, '');
+      const i = v.indexOf('.');
+      if (i !== -1) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, '');
+      input.value = v;
+    });
+  }
 
   async function quickScanFlow() {
     const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
@@ -790,6 +805,9 @@
       body += '<div class="kv"><span class="k">Status</span><span class="v"><span class="chip gray">in inventory</span></span></div>';
       actions += '<button class="btn primary" data-action="activate-pack" data-pack="' + pack.id + '">Activate → bin</button>';
       actions += '<button class="btn" data-action="full-pack-inv" data-pack="' + pack.id + '">Sell full pack</button>';
+    } else if (pack.status === 'trash') {
+      body += '<div class="kv"><span class="k">Status</span><span class="v"><span class="chip gray">in trash</span></span></div>';
+      actions += '<button class="btn primary" data-action="restore-trash" data-pack="' + pack.id + '">Restore to inventory</button>';
     } else {
       body += '<div class="kv"><span class="k">Status</span><span class="v"><span class="chip red">sold out</span></span></div>';
       actions += '<button class="btn primary" data-action="reverse-soldout" data-pack="' + pack.id + '">Reverse sold-out</button>';
@@ -1145,6 +1163,7 @@
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn green lg" id="ed-go">Close day</button>',
       onMount: (root) => {
         root.querySelectorAll('.ed-end').forEach((inp) => onlyDigits(inp, 3));
+        ['#ed-os', '#ed-oc', '#ed-sc'].forEach((s) => moneyInput(root.querySelector(s)));
         const recompute = () => {
           // write end indexes into the live day for preview
           root.querySelectorAll('.ed-end').forEach((inp) => {
