@@ -59,8 +59,10 @@ tells you what game/pack it is and what you can do with it.
 
 ## How the numbers work (verified against the spec)
 
-- **Barcode** `GGGGG-PPPPPPP-III` → game number / pack number / pack index.
-  The index is how many tickets have sold from that pack (a fresh pack is 0).
+- **Barcode** `GGGGG-PPPPPP-III` → game (5) / pack (6) / index (3) = 14 digits,
+  e.g. real NJ ticket `01967-012922-003 (057)`. The `(057)` is a check digit and
+  is ignored. The index is how many tickets have sold from that pack (fresh = 0).
+  Widths are adjustable in **Settings** for other states.
 - **Pack size** comes from price: `$1→200, $2→150, $3→100, $5→60, $10→30, $20/$25/$30/$40→20`
   (NJ price tiers; `$3` defaults to 100 tickets — overridable per game).
 - **Daily sale per bin** = `end − start`. If a pack sold out and was replaced

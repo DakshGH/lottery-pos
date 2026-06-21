@@ -62,6 +62,13 @@
     } else if (!state.catalog || !state.catalog.games || !Object.keys(state.catalog.games).length) {
       state.catalog = seedCatalog || { games: {} };
     }
+    // Migration: early builds defaulted the pack field to 7 digits, but real NJ
+    // packs are 6 (game5 + pack6 + index3 = 14). Correct old installs in place.
+    const bw = state.settings && state.settings.barcodeWidths;
+    if (bw && bw.game === 5 && bw.pack === 7 && bw.index === 3) {
+      bw.pack = 6;
+      storage.save(state);
+    }
 
     const subscribers = new Set();
     function subscribe(fn) {

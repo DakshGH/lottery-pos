@@ -21,7 +21,10 @@
 })(this, function () {
   'use strict';
 
-  const DEFAULT_WIDTHS = { game: 5, pack: 7, index: 3 };
+  // NJ scratch barcode = game(5) + pack(6) + index(3) = 14 digits. A trailing
+  // check digit (e.g. the "(057)" printed on the ticket) may or may not be
+  // encoded; parse() ignores anything past the 14 it needs.
+  const DEFAULT_WIDTHS = { game: 5, pack: 6, index: 3 };
 
   /**
    * Parse a raw scanned string into { gameNumber, packNumber, index }.
@@ -41,17 +44,18 @@
       }
     }
 
-    // Otherwise treat as a continuous digit string and slice by widths.
+    // Otherwise treat as a continuous digit string and slice by widths. Extra
+    // trailing digits (a check digit / the parenthetical number) are ignored.
     const digits = s.replace(/\D/g, '');
     const total = widths.game + widths.pack + widths.index;
-    if (digits.length !== total) {
+    if (digits.length < total) {
       return fail(
-        `Expected ${total} digits (got ${digits.length}). Check the scan or barcode width settings.`
+        `Expected at least ${total} digits (got ${digits.length}). Check the scan or barcode width settings.`
       );
     }
     const game = digits.slice(0, widths.game);
     const pack = digits.slice(widths.game, widths.game + widths.pack);
-    const index = digits.slice(widths.game + widths.pack);
+    const index = digits.slice(widths.game + widths.pack, total);
     return build(game, pack, index);
   }
 

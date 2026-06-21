@@ -20,26 +20,39 @@ function test(name, fn) {
 
 // ---- barcode -------------------------------------------------------------
 
-test('parses dashed barcode', () => {
-  const r = barcode.parse('01967-1032738-033');
+// Real NJ ticket: 01967-012922-003 (057)  => game5 / pack6 / index3 = 14 digits
+test('parses dashed NJ barcode', () => {
+  const r = barcode.parse('01967-012922-003');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.gameNumber, '01967');
-  assert.strictEqual(r.packNumber, '1032738');
-  assert.strictEqual(r.index, 33);
-  assert.strictEqual(r.packKey, '01967-1032738');
+  assert.strictEqual(r.packNumber, '012922');
+  assert.strictEqual(r.index, 3);
+  assert.strictEqual(r.packKey, '01967-012922');
 });
 
-test('parses continuous 15-digit barcode', () => {
-  const r = barcode.parse('019671032738033');
+test('parses continuous 14-digit NJ barcode (camera decode)', () => {
+  const r = barcode.parse('01967012922003');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.gameNumber, '01967');
-  assert.strictEqual(r.packNumber, '1032738');
-  assert.strictEqual(r.index, 33);
+  assert.strictEqual(r.packNumber, '012922');
+  assert.strictEqual(r.index, 3);
 });
 
-test('rejects wrong-length scan', () => {
-  const r = barcode.parse('12345');
-  assert.strictEqual(r.ok, false);
+test('ignores a trailing check digit / parenthetical number', () => {
+  const r = barcode.parse('01967012922003057'); // 14 + (057)
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.packNumber, '012922');
+  assert.strictEqual(r.index, 3);
+});
+
+test('parsePack ignores the index (inventory = game+pack = 11 digits)', () => {
+  const r = barcode.parsePack('01967012922'); // 5 + 6
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.packKey, '01967-012922');
+});
+
+test('rejects too-short scan', () => {
+  assert.strictEqual(barcode.parse('12345').ok, false);
 });
 
 // ---- engine basics -------------------------------------------------------
