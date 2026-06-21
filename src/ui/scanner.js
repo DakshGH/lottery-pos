@@ -1,15 +1,19 @@
 /*
- * scanner.js — camera-based QR / barcode scanner with graceful fallbacks.
+ * scanner.js — camera barcode/QR scanner with graceful, cross-browser fallbacks.
  *
- * Primary input is the device camera (uses the native BarcodeDetector API,
- * supporting QR codes and 1D barcodes). Always offers a manual / hardware-
- * scanner text field so it works on devices without a camera or that API.
+ * Camera decoding engine, chosen at runtime:
+ *   1. Native BarcodeDetector  (Chrome / Edge / Android — fastest, no library)
+ *   2. ZXing  (vendor/zxing.js) — used when the native API is missing
+ *      (Safari / iOS / Firefox). This is the "common barcode library".
+ *   3. If neither + no camera → manual / USB hardware-scanner text entry.
+ *
+ * Lottery tickets are 1D barcodes (ITF / Code 128), so ZXing is hinted to those
+ * formats (plus QR) for speed and accuracy.
  *
  * API:
- *   POS.scanner.scanOnce({ title, hint })  -> Promise<string|null>   (raw value)
- *   POS.scanner.openContinuous({ title, hint, onResult })            -> { close }
- *       onResult(raw) may return { kind:'ok'|'warn'|'err', title, msg }
- *       to show a line in the in-scanner activity log.
+ *   POS.scanner.scanOnce({ title, hint, mask })  -> Promise<string|null>
+ *   POS.scanner.openContinuous({ title, hint, mask, onResult }) -> { close }
+ *       onResult(raw) may return { kind:'ok'|'warn'|'err', title, msg }.
  *
  * Browser global: window.POS.scanner
  */
@@ -21,6 +25,20 @@
     '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8"/></svg>';
 
   function hasDetector() { return 'BarcodeDetector' in window; }
+  function hasZXing() { return !!(window.ZXing && window.ZXing.BrowserMultiFormatReader); }
+
+  // ZXing decode hints: the 1D formats found on lottery tickets, plus QR.
+  function zxingHints() {
+    const Z = window.ZXing;
+    const f = Z.BarcodeFormat;
+    const hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
+      f.ITF, f.CODE_128, f.CODE_39, f.CODABAR,
+      f.EAN_13, f.EAN_8, f.UPC_A, f.UPC_E, f.QR_CODE,
+    ]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    return hints;
+  }
 
   function build(opts) {
     const continuous = !!opts.continuous;
@@ -58,7 +76,7 @@
     const statusEl = overlay.querySelector('.scan-status');
     const input = overlay.querySelector('.scan-manual input');
     const logEl = overlay.querySelector('.scan-log');
-    let stream = null, detector = null, timer = null, closed = false, lastVal = '', lastAt = 0;
+    let stream = null, detector = null, timer = null, zxingReader = null, closed = false, lastVal = '', lastAt = 0;
 
     function setStatus(msg, kind) {
       statusEl.textContent = msg;
@@ -99,22 +117,40 @@
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         return noCamera('Camera not available on this device.');
       }
+      // 1) Native BarcodeDetector — fastest where supported.
+      if (hasDetector()) return initNative();
+      // 2) ZXing library — cross-browser fallback (Safari / iOS / Firefox).
+      if (hasZXing()) return initZXing();
+      // 3) Camera preview only, manual entry for decoding.
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }, audio: false,
-        });
-      } catch (e) {
-        return noCamera('Camera blocked or unavailable — use manual entry.');
-      }
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        video.srcObject = stream; try { await video.play(); } catch (e) {}
+        setStatus('Live camera (auto-detect unavailable — type the code).', 'warn');
+      } catch (e) { noCamera('Camera blocked or unavailable — use manual entry.'); }
+    }
+
+    async function initNative() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      } catch (e) { return noCamera('Camera blocked or unavailable — use manual entry.'); }
       video.srcObject = stream;
       try { await video.play(); } catch (e) {}
-      if (!hasDetector()) {
-        setStatus('Live camera (auto-detect unavailable — type the code).', 'warn');
-        return;
-      }
       try { detector = new window.BarcodeDetector(); } catch (e) { detector = null; }
-      setStatus('Point at the barcode / QR code', '');
+      if (!detector) return initZXing(); // detector ctor failed -> try library
+      setStatus('Point at the barcode', '');
       timer = setInterval(scanTick, 280);
+    }
+
+    function initZXing() {
+      if (!hasZXing()) return noCamera('Camera decoding unavailable — use manual entry.');
+      try {
+        zxingReader = new window.ZXing.BrowserMultiFormatReader(zxingHints(), 250);
+        setStatus('Point at the barcode', '');
+        zxingReader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' } } }, video,
+          (result) => { if (!closed && result) deliver(result.getText()); }
+        ).catch(() => noCamera('Camera blocked or unavailable — use manual entry.'));
+      } catch (e) { noCamera('Camera blocked or unavailable — use manual entry.'); }
     }
 
     function noCamera(msg) {
@@ -135,6 +171,7 @@
       if (closed) return;
       closed = true;
       if (timer) clearInterval(timer);
+      if (zxingReader) { try { zxingReader.reset(); } catch (e) {} }
       if (stream) stream.getTracks().forEach((t) => t.stop());
       overlay.remove();
     }
@@ -191,5 +228,7 @@
     return { close: () => handle.close && handle.close() };
   }
 
-  POS.scanner = { scanOnce, openContinuous, hasDetector };
+  // engine() reports which camera decoder is in use — handy for diagnostics.
+  function engine() { return hasDetector() ? 'native' : hasZXing() ? 'zxing' : 'manual'; }
+  POS.scanner = { scanOnce, openContinuous, hasDetector, hasZXing, engine };
 })();

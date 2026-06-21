@@ -97,6 +97,8 @@
       POS.games.fetchCatalog(url).then((cat) => { if (cat) store.setCatalog(cat); });
     }
     window.addEventListener('hashchange', () => render());
+    // USB barcode scanner (keyboard-wedge): works from any screen
+    if (POS.hardwareScan) POS.hardwareScan.install(handleHardwareScan);
     // subscription / anti-theft: lock the app if the license server says so
     if (POS.license) {
       POS.license.onChange(renderLockScreen);
@@ -757,6 +759,13 @@
   async function quickScanFlow() {
     const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
     if (!raw) return;
+    const parsed = barcode.parse(raw, widths());
+    if (!parsed.ok) { toast('Bad scan', parsed.error, 'err'); return; }
+    identify(parsed);
+  }
+
+  // A USB hardware scanner fired from any screen (no camera) -> identify it.
+  function handleHardwareScan(raw) {
     const parsed = barcode.parse(raw, widths());
     if (!parsed.ok) { toast('Bad scan', parsed.error, 'err'); return; }
     identify(parsed);

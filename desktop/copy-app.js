@@ -11,7 +11,7 @@ const out = path.join(__dirname, 'app');
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 
-for (const item of ['index.html', 'src', 'styles', 'data']) {
+for (const item of ['index.html', 'src', 'styles', 'data', 'vendor']) {
   const from = path.join(root, item);
   const to = path.join(out, item);
   if (fs.existsSync(from)) {

@@ -87,9 +87,12 @@ src/core/
   games.js              game-database lookup (local + remote)
   storage.js            localStorage persistence + backup export/import
   store.js              app state + every business action (the brain)
+  license.js            subscription heartbeat / lock scaffold
 src/ui/
-  scanner.js            camera QR / barcode scanner (+ manual / USB fallback)
+  scanner.js            camera scanner: native BarcodeDetector -> ZXing -> manual
+  hardware-scan.js      global USB keyboard-wedge scanner capture
   app.js                UI: views, day flows, scan wiring
+vendor/zxing.js         vendored ZXing barcode library (offline camera decoding)
 data/gen-nj-seed.js     regenerates the NJ catalog from the source game list
 test/engine.test.js     zero-dependency tests
 ```
@@ -99,15 +102,31 @@ the UI stays thin.
 
 ---
 
-## Scanning (camera QR / barcode)
+## Scanning — two paths
+
+Both the camera and a USB barcode scanner work everywhere.
+
+**1. USB barcode scanner (keyboard-wedge)** — `src/ui/hardware-scan.js`.
+A USB scanner "types" the barcode + Enter. This listens **app-wide**, so a clerk
+can scan from any screen without clicking into a field first; the scanned ticket
+is identified instantly. It stays out of the way when you're typing in a real
+field or when the camera dialog is open. Tune `MAX_GAP_MS` / `MIN_LENGTH` there.
+
+**2. Camera** — `src/ui/scanner.js`. The decoding engine is chosen at runtime:
+1. native **`BarcodeDetector`** (Chrome / Edge / Android — fastest), else
+2. **ZXing** — the common barcode library, vendored offline at `vendor/zxing.js`
+   (`@zxing/library` UMD), used on Safari / iOS / Firefox, else
+3. camera preview with **manual entry** if no decoder, or text/USB entry if no
+   camera at all.
+ZXing is hinted to the 1D formats on lottery tickets (ITF, Code 128, Code 39,
+Codabar, EAN/UPC) plus QR. `POS.scanner.engine()` reports which is active.
 
 Every scan point — the top **Scan** button, *Add delivery*, *New pack*, *Update
-index*, and *End day* — opens the **device camera** and reads QR codes and 1D
-barcodes via the browser's native `BarcodeDetector`. If there's no camera or the
-browser lacks the API, the same dialog offers a text field that accepts **USB
-hardware scanners** (they type + Enter) or **manual typing**. Camera access needs
-a secure context — `http://localhost` (the bundled server) or the desktop build
-both qualify.
+index*, *End day* — uses this. Camera access needs a secure context:
+`http://localhost` (bundled server), the HTTPS GitHub Pages link, or the desktop
+build all qualify.
+
+> Updating the library: `curl -fsSL https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js -o vendor/zxing.js`
 
 ## Game database — New Jersey
 
