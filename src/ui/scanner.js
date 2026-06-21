@@ -23,6 +23,27 @@
 
   const SVG_SCAN =
     '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8"/></svg>';
+  const SVG_TORCH =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 7h2l-5 13v-9H8z"/></svg>';
+
+  // High-res rear camera with continuous autofocus — needed to resolve the thin
+  // bars of the 1D (Interleaved 2 of 5) barcode on lottery tickets.
+  function cameraConstraints() {
+    return {
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        focusMode: 'continuous',
+      },
+    };
+  }
+  function activeTrack(video, stream) {
+    if (stream) { const t = stream.getVideoTracks()[0]; if (t) return t; }
+    const s = video && video.srcObject;
+    return s && s.getVideoTracks ? s.getVideoTracks()[0] || null : null;
+  }
 
   function hasDetector() { return 'BarcodeDetector' in window; }
   function hasZXing() { return !!(window.ZXing && window.ZXing.BrowserMultiFormatReader); }
@@ -50,8 +71,9 @@
           '<h2>' + esc(opts.title || 'Scan ticket') + '</h2>' +
           '<button class="x" data-x>&times;</button></div>' +
         '<div class="scan-stage">' +
-          '<video playsinline muted></video>' +
+          '<video playsinline autoplay muted></video>' +
           '<div class="scan-reticle"><span></span><span></span><span></span><span></span><div class="scan-laser"></div></div>' +
+          '<button class="scan-torch" data-torch hidden title="Flashlight">' + SVG_TORCH + '</button>' +
           '<div class="scan-status">Starting camera…</div>' +
         '</div>' +
         '<div class="scan-manual">' +
@@ -123,34 +145,62 @@
       if (hasZXing()) return initZXing();
       // 3) Camera preview only, manual entry for decoding.
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia(cameraConstraints());
         video.srcObject = stream; try { await video.play(); } catch (e) {}
+        afterCameraReady();
         setStatus('Live camera (auto-detect unavailable — type the code).', 'warn');
       } catch (e) { noCamera('Camera blocked or unavailable — use manual entry.'); }
     }
 
     async function initNative() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia(cameraConstraints());
       } catch (e) { return noCamera('Camera blocked or unavailable — use manual entry.'); }
       video.srcObject = stream;
       try { await video.play(); } catch (e) {}
+      afterCameraReady();
       try { detector = new window.BarcodeDetector(); } catch (e) { detector = null; }
       if (!detector) return initZXing(); // detector ctor failed -> try library
-      setStatus('Point at the barcode', '');
-      timer = setInterval(scanTick, 280);
+      setStatus('Point at the barcode — hold steady, fill the frame', '');
+      timer = setInterval(scanTick, 200);
     }
 
     function initZXing() {
       if (!hasZXing()) return noCamera('Camera decoding unavailable — use manual entry.');
       try {
-        zxingReader = new window.ZXing.BrowserMultiFormatReader(zxingHints(), 250);
-        setStatus('Point at the barcode', '');
+        zxingReader = new window.ZXing.BrowserMultiFormatReader(zxingHints(), 200);
+        setStatus('Point at the barcode — hold steady, fill the frame', '');
         zxingReader.decodeFromConstraints(
-          { video: { facingMode: { ideal: 'environment' } } }, video,
+          cameraConstraints(), video,
           (result) => { if (!closed && result) deliver(result.getText()); }
-        ).catch(() => noCamera('Camera blocked or unavailable — use manual entry.'));
+        ).then(() => afterCameraReady())
+          .catch(() => noCamera('Camera blocked or unavailable — use manual entry.'));
       } catch (e) { noCamera('Camera blocked or unavailable — use manual entry.'); }
+    }
+
+    // Once a camera is live (any engine): request continuous autofocus and show
+    // the torch button if the device supports it.
+    function afterCameraReady() {
+      const track = activeTrack(video, stream);
+      if (!track) return;
+      try {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps && Array.isArray(caps.focusMode) && caps.focusMode.indexOf('continuous') !== -1) {
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        }
+        if (caps && caps.torch) {
+          const btn = overlay.querySelector('[data-torch]');
+          if (btn) {
+            btn.hidden = false;
+            let on = false;
+            btn.onclick = () => {
+              on = !on;
+              track.applyConstraints({ advanced: [{ torch: on }] })
+                .then(() => btn.classList.toggle('on', on)).catch(() => {});
+            };
+          }
+        }
+      } catch (e) { /* capabilities not supported — fine */ }
     }
 
     function noCamera(msg) {
