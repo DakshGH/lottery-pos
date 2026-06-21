@@ -270,6 +270,8 @@ table.tbl .editable:hover { background: var(--accent-soft); }
 .list-item .grow { flex: 1; min-width: 0; }
 .list-item .title { font-weight: 500; }
 .list-item .sub { font-size: 12px; color: var(--text-dim); }
+.warn-banner { background: var(--red-soft); border: 1px solid rgba(224,121,111,0.4); color: #f3b0a8; border-radius: var(--radius-sm); padding: 11px 13px; font-size: 13px; margin-bottom: 12px; }
+.warn-banner.amber { background: rgba(210,161,78,0.14); border-color: rgba(210,161,78,0.4); color: #e3c489; }
 .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
 .sdot.ok { background: var(--green); }
 .sdot.warn { background: var(--amber); }

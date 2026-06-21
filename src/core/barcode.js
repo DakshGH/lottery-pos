@@ -83,6 +83,41 @@
   }
 
   /**
+   * Classify any scanned code as one of:
+   *   kind:'ticket'  — the long validation barcode (game/pack/index)  -> parsed
+   *   kind:'retail'  — a UPC/EAN retail barcode (the small one)       -> { code }
+   *   kind:'invalid' — not a recognizable lottery barcode             -> { error }
+   * Length disambiguates: >= 14 digits (or dashed G-P-I) is a ticket;
+   * 8/12/13 digits is a retail UPC/EAN; anything else is invalid.
+   */
+  function classify(raw, widths) {
+    widths = widths || DEFAULT_WIDTHS;
+    const s = String(raw == null ? '' : raw).trim();
+    if (!s) return { ok: false, kind: 'invalid', error: 'Empty scan' };
+
+    if (s.indexOf('-') !== -1) {
+      const parts = s.split('-').map((p) => p.replace(/\D/g, ''));
+      if (parts.length === 3 && parts.every((p) => p.length > 0)) {
+        const t = parse(s, widths);
+        return Object.assign({ kind: t.ok ? 'ticket' : 'invalid' }, t);
+      }
+    }
+    const digits = s.replace(/\D/g, '');
+    const total = widths.game + widths.pack + widths.index;
+    if (digits.length >= total) {
+      const t = parse(digits, widths);
+      return Object.assign({ kind: t.ok ? 'ticket' : 'invalid' }, t);
+    }
+    if (digits.length === 12 || digits.length === 13 || digits.length === 8) {
+      return { ok: true, kind: 'retail', code: digits };
+    }
+    return {
+      ok: false, kind: 'invalid',
+      error: 'Not a valid lottery ticket barcode (' + (digits.length || 0) + ' digits).',
+    };
+  }
+
+  /**
    * Parse just the game + pack (index ignored / optional). Used for inventory,
    * where a fresh pack has no meaningful ticket index. Accepts either a full
    * barcode (from a camera scan) or a game-pack-only string (manual entry).
@@ -108,5 +143,5 @@
     return { ok: true, gameNumber: game, packNumber: pack, packKey: game + '-' + pack };
   }
 
-  return { parse, parsePack, packKey, DEFAULT_WIDTHS };
+  return { parse, parsePack, classify, packKey, DEFAULT_WIDTHS };
 });

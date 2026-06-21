@@ -685,6 +685,7 @@
       case 'scan': return quickScanFlow();
       case 'show-help': return helpFlow();
       case 'show-notifications': return notificationsFlow();
+      case 'relink-upc': return linkRetailModal(d.code, false);
       // day lifecycle
       case 'start-day': return startDayFlow();
       case 'end-day': return endDayFlow();
@@ -758,17 +759,89 @@
 
   async function quickScanFlow() {
     const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
-    if (!raw) return;
-    const parsed = barcode.parse(raw, widths());
-    if (!parsed.ok) { toast('Bad scan', parsed.error, 'err'); return; }
-    identify(parsed);
+    if (raw) routeScan(raw);
   }
 
-  // A USB hardware scanner fired from any screen (no camera) -> identify it.
-  function handleHardwareScan(raw) {
-    const parsed = barcode.parse(raw, widths());
-    if (!parsed.ok) { toast('Bad scan', parsed.error, 'err'); return; }
-    identify(parsed);
+  // A USB hardware scanner fired from any screen (no camera) -> route it.
+  function handleHardwareScan(raw) { routeScan(raw); }
+
+  // For flows that need the long validation barcode (pack/index). Returns the
+  // parsed ticket, or null after showing the right message for a retail/junk code.
+  function requireTicket(raw) {
+    const c = barcode.classify(raw, widths());
+    if (c.kind === 'ticket') return c;
+    if (c.kind === 'retail') toast('Use the long barcode', 'That is the small retail barcode — scan the long one (with the pack number)', 'warn');
+    else toast('Not a valid ticket', c.error || 'Unrecognized barcode', 'err');
+    return null;
+  }
+
+  // Single entry point for any scanned code: long validation barcode, small
+  // retail (UPC) barcode, or junk — each handled with the right feedback.
+  function routeScan(raw) {
+    const c = barcode.classify(raw, widths());
+    if (c.kind === 'ticket') return identify(c);
+    if (c.kind === 'retail') return identifyRetail(c.code);
+    invalidScanWarn(raw, c.error);
+  }
+
+  // Clear warning for a code that isn't a recognizable lottery barcode.
+  function invalidScanWarn(raw, msg) {
+    toast('Not a valid ticket', msg || 'Unrecognized barcode', 'err');
+    openModal({
+      title: 'Unrecognized barcode',
+      bodyHTML:
+        '<div class="warn-banner">This does not look like a valid NJ lottery ticket. ' +
+        'It may be the wrong barcode, a damaged scan, or a non-lottery item.</div>' +
+        '<div class="kv"><span class="k">Scanned</span><span class="v mono">' + esc(String(raw).slice(0, 40)) + '</span></div>' +
+        '<div class="kv"><span class="k">Reason</span><span class="v">' + esc(msg || 'unrecognized') + '</span></div>' +
+        '<p class="muted" style="margin-top:12px">Tip: the long barcode (with the pack number, e.g. <span class="mono">01967-012922-003</span>) is the one to scan for inventory and sales.</p>',
+      footHTML: '<button class="btn primary" data-action="close-modal">OK</button>',
+    });
+  }
+
+  // The small retail (UPC) barcode: identifies the game (if linked), but has no
+  // pack/ticket number, so it can't be used for inventory/activation.
+  function identifyRetail(code) {
+    const g = store.resolveRetailCode(code);
+    if (g && g._known) {
+      openModal({
+        title: 'Retail barcode',
+        bodyHTML:
+          '<div class="kv"><span class="k">Game</span><span class="v">' + esc(g.name) + ' · ' + money(g.price) + '</span></div>' +
+          '<div class="kv"><span class="k">Retail code</span><span class="v mono">' + esc(code) + '</span></div>' +
+          '<div class="warn-banner amber" style="margin-top:12px">This is the small <b>retail</b> barcode — it identifies the game but not the pack/ticket. ' +
+          'To activate a pack or count sales, scan the <b>long</b> barcode.</div>',
+        footHTML: '<button class="btn ghost" data-action="relink-upc" data-code="' + esc(code) + '">Re-link game</button>' +
+          '<button class="btn primary" data-action="close-modal">OK</button>',
+      });
+    } else {
+      linkRetailModal(code, true);
+    }
+  }
+
+  // Modal to link/relink a retail barcode to a game.
+  function linkRetailModal(code, unknown) {
+    const cur = store.resolveRetailCode(code);
+    const games = store.gameDb().allKnownNumbers().map((n) => {
+      const gg = store.lookupGame(n);
+      const sel = cur && cur.gameNumber === n ? ' selected' : '';
+      return '<option value="' + n + '"' + sel + '>' + esc(gg.name) + ' (' + esc(n) + ', ' + money(gg.price) + ')</option>';
+    }).join('');
+    openModal({
+      title: unknown ? 'Unrecognized retail barcode' : 'Re-link retail barcode',
+      bodyHTML:
+        (unknown ? '<div class="warn-banner">This retail barcode isn\'t linked to a game. If it\'s a real lottery ticket, link it once and future scans will resolve automatically. Otherwise it may not be a lottery item.</div>' : '') +
+        '<div class="kv"><span class="k">Retail code</span><span class="v mono">' + esc(code) + '</span></div>' +
+        '<div class="field" style="margin-top:14px"><label>Link to game</label><select id="lk-game">' + games + '</select></div>',
+      footHTML: '<button class="btn ghost" data-action="close-modal">' + (unknown ? 'Not a ticket' : 'Cancel') + '</button>' +
+        '<button class="btn primary" id="lk-save">Link to game</button>',
+      onMount: (root) => {
+        root.querySelector('#lk-save').onclick = () => {
+          store.linkRetailCode(code, root.querySelector('#lk-game').value);
+          closeModal(); toast('Linked', 'Retail barcode now resolves to that game', 'ok');
+        };
+      },
+    });
   }
 
   function helpFlow() {
@@ -801,10 +874,12 @@
     if (!pack) {
       if (g && g._known) {
         actions = '<button class="btn primary" data-action="qs-add-inv" data-game="' + esc(parsed.gameNumber) + '" data-pack="' + esc(parsed.packNumber) + '">Add to inventory</button>';
+        body += '<p class="muted">Not in the system yet.</p>';
       } else {
-        actions = '<button class="btn primary" data-action="define-game" data-game="' + esc(parsed.gameNumber) + '">Define this game</button>';
+        // parsed as a ticket, but the game number isn't in the NJ catalog
+        body = '<div class="warn-banner amber">Game <b>' + esc(parsed.gameNumber) + '</b> isn\'t in the New Jersey catalog. If this is a real ticket, add the game; if not, it may be the wrong barcode or a non-NJ / invalid ticket.</div>' + body;
+        actions = '<button class="btn primary" data-action="define-game" data-game="' + esc(parsed.gameNumber) + '">Add this game</button>';
       }
-      body += '<p class="muted">Not in the system yet.</p>';
     } else if (pack.status === 'active') {
       const bin = store.getBin(pack.binId);
       body += '<div class="kv"><span class="k">Status</span><span class="v"><span class="chip green">active in ' + esc(bin ? bin.name : '?') + '</span></span></div>';
@@ -891,8 +966,8 @@
         root.querySelector('#act-scanbtn').onclick = async () => {
           const raw = await POS.scanner.scanOnce({ title: 'Scan new pack', mask: fullMask() });
           if (!raw) return;
-          const parsed = barcode.parse(raw, widths());
-          if (!parsed.ok) return toast('Bad scan', parsed.error, 'err');
+          const parsed = requireTicket(raw);
+          if (!parsed) return;
           const g = store.lookupGame(parsed.gameNumber);
           if (!g || !g._known) { closeModal(); return defineGameFlow(parsed.gameNumber); }
           let pack = store.findPackByKey(parsed.packKey);
@@ -1017,8 +1092,8 @@
         root.querySelector('#ui-scanbtn').onclick = async () => {
           const raw = await POS.scanner.scanOnce({ title: 'Scan ticket', mask: fullMask() });
           if (!raw) return;
-          const parsed = barcode.parse(raw, widths());
-          if (!parsed.ok) return toast('Bad scan', parsed.error, 'err');
+          const parsed = requireTicket(raw);
+          if (!parsed) return;
           if (parsed.packKey !== pack.packKey) return toast('Different pack', 'That ticket is not this bin\'s pack', 'warn');
           idx.value = String(parsed.index);
         };
@@ -1053,8 +1128,10 @@
       hint: 'or type game-pack, then Enter',
       mask: packMask(), // game + pack only; no ticket index needed for inventory
       onResult: (raw) => {
+        const c = barcode.classify(raw, widths());
+        if (c.kind === 'retail') return { kind: 'warn', title: 'Retail barcode', msg: 'Scan the long barcode (with the pack number)' };
+        if (c.kind !== 'ticket') return { kind: 'err', title: 'Not a valid ticket', msg: c.error || 'Unrecognized' };
         const parsed = barcode.parsePack(raw, widths());
-        if (!parsed.ok) return { kind: 'err', title: 'Invalid', msg: parsed.error };
         const g = store.lookupGame(parsed.gameNumber);
         const res = store.addToInventory(parsed);
         if (!res.ok) return { kind: 'warn', title: 'Duplicate skipped', msg: parsed.packKey };
@@ -1195,8 +1272,10 @@
             title: 'Scan bins',
             mask: fullMask(),
             onResult: (raw) => {
-              const parsed = barcode.parse(raw, widths());
-              if (!parsed.ok) return { kind: 'err', title: 'Bad scan', msg: parsed.error };
+              const c2 = barcode.classify(raw, widths());
+              if (c2.kind === 'retail') return { kind: 'warn', title: 'Retail barcode', msg: 'Scan the long barcode' };
+              if (c2.kind !== 'ticket') return { kind: 'err', title: 'Not a valid ticket', msg: c2.error || 'Unrecognized' };
+              const parsed = c2;
               let matched = null, binName = '';
               root.querySelectorAll('.ed-end').forEach((inp) => {
                 const segs = day.bins[inp.dataset.bin].segments;

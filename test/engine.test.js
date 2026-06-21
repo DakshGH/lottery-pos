@@ -55,6 +55,23 @@ test('rejects too-short scan', () => {
   assert.strictEqual(barcode.parse('12345').ok, false);
 });
 
+test('classify: long barcode is a ticket', () => {
+  const c = barcode.classify('01967012922003');
+  assert.strictEqual(c.kind, 'ticket');
+  assert.strictEqual(c.packNumber, '012922');
+});
+
+test('classify: 12-digit UPC is a retail code', () => {
+  const c = barcode.classify('814605026613'); // the small barcode
+  assert.strictEqual(c.kind, 'retail');
+  assert.strictEqual(c.code, '814605026613');
+});
+
+test('classify: junk / short is invalid', () => {
+  assert.strictEqual(barcode.classify('hello world').kind, 'invalid');
+  assert.strictEqual(barcode.classify('12345').kind, 'invalid');
+});
+
 // ---- engine basics -------------------------------------------------------
 
 test('price -> tickets per pack', () => {
