@@ -1,9 +1,12 @@
-# 🎟️ Lottery POS — Scratch-Off Inventory & Cash Tracker
+# Lottery POS — Scratch-Off Inventory & Cash Tracker
 
 A simple app for store owners who sell lottery scratch-offs. It virtualizes your
 physical bins, tracks how many tickets each pack sells per day, manages
 inventory and sold-out packs, and **auto-calculates how much cash should be in
 the register** from your daily lottery report.
+
+**Docs:** full build history & roadmap in [CHANGELOG.md](CHANGELOG.md) ·
+pricing in [PRICING.md](PRICING.md) · anti-theft design in [LICENSING.md](LICENSING.md).
 
 Runs on **any Windows or Linux device** — it's a self-contained local app, no
 account needed. Seeded with the **New Jersey Lottery** game catalog. Scanning is

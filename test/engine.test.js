@@ -67,6 +67,12 @@ test('classify: 12-digit UPC is a retail code', () => {
   assert.strictEqual(c.code, '814605026613');
 });
 
+test('classify: 13-digit EAN (UPC with leading zero) is retail', () => {
+  const c = barcode.classify('0814605026613'); // what scanners actually return
+  assert.strictEqual(c.kind, 'retail');
+  assert.strictEqual(c.code, '0814605026613');
+});
+
 test('classify: junk / short is invalid', () => {
   assert.strictEqual(barcode.classify('hello world').kind, 'invalid');
   assert.strictEqual(barcode.classify('12345').kind, 'invalid');
