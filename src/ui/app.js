@@ -685,7 +685,6 @@
       case 'scan': return quickScanFlow();
       case 'show-help': return helpFlow();
       case 'show-notifications': return notificationsFlow();
-      case 'relink-upc': return linkRetailModal(d.code, false);
       // day lifecycle
       case 'start-day': return startDayFlow();
       case 'end-day': return endDayFlow();
@@ -799,48 +798,18 @@
     });
   }
 
-  // The small retail (UPC) barcode: identifies the game (if linked), but has no
-  // pack/ticket number, so it can't be used for inventory/activation.
+  // The small retail (UPC) barcode. It does NOT contain the game, pack, or
+  // ticket number, and there's no reliable public UPC->game table, so we never
+  // guess a game (that produced wrong results). We recognize it and point the
+  // clerk to the long barcode, which identifies every game correctly.
   function identifyRetail(code) {
-    const g = store.resolveRetailCode(code);
-    if (g && g._known) {
-      openModal({
-        title: 'Retail barcode',
-        bodyHTML:
-          '<div class="kv"><span class="k">Game</span><span class="v">' + esc(g.name) + ' · ' + money(g.price) + '</span></div>' +
-          '<div class="kv"><span class="k">Retail code</span><span class="v mono">' + esc(code) + '</span></div>' +
-          '<div class="warn-banner amber" style="margin-top:12px">This is the small <b>retail</b> barcode — it identifies the game but not the pack/ticket. ' +
-          'To activate a pack or count sales, scan the <b>long</b> barcode.</div>',
-        footHTML: '<button class="btn ghost" data-action="relink-upc" data-code="' + esc(code) + '">Re-link game</button>' +
-          '<button class="btn primary" data-action="close-modal">OK</button>',
-      });
-    } else {
-      linkRetailModal(code, true);
-    }
-  }
-
-  // Modal to link/relink a retail barcode to a game.
-  function linkRetailModal(code, unknown) {
-    const cur = store.resolveRetailCode(code);
-    const games = store.gameDb().allKnownNumbers().map((n) => {
-      const gg = store.lookupGame(n);
-      const sel = cur && cur.gameNumber === n ? ' selected' : '';
-      return '<option value="' + n + '"' + sel + '>' + esc(gg.name) + ' (' + esc(n) + ', ' + money(gg.price) + ')</option>';
-    }).join('');
     openModal({
-      title: unknown ? 'Unrecognized retail barcode' : 'Re-link retail barcode',
+      title: 'Retail barcode',
       bodyHTML:
-        (unknown ? '<div class="warn-banner">This retail barcode isn\'t linked to a game. If it\'s a real lottery ticket, link it once and future scans will resolve automatically. Otherwise it may not be a lottery item.</div>' : '') +
+        '<div class="warn-banner amber">This is the small <b>retail</b> (sell) barcode. It doesn\'t contain the game, pack, or ticket number this app needs.</div>' +
         '<div class="kv"><span class="k">Retail code</span><span class="v mono">' + esc(code) + '</span></div>' +
-        '<div class="field" style="margin-top:14px"><label>Link to game</label><select id="lk-game">' + games + '</select></div>',
-      footHTML: '<button class="btn ghost" data-action="close-modal">' + (unknown ? 'Not a ticket' : 'Cancel') + '</button>' +
-        '<button class="btn primary" id="lk-save">Link to game</button>',
-      onMount: (root) => {
-        root.querySelector('#lk-save').onclick = () => {
-          store.linkRetailCode(code, root.querySelector('#lk-game').value);
-          closeModal(); toast('Linked', 'Retail barcode now resolves to that game', 'ok');
-        };
-      },
+        '<p class="muted" style="margin-top:12px">Scan the <b>long</b> barcode (e.g. <span class="mono">01967-012922-003</span>) to identify the game and manage the pack.</p>',
+      footHTML: '<button class="btn primary" data-action="close-modal">OK</button>',
     });
   }
 

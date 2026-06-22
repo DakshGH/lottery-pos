@@ -13,20 +13,24 @@ Versioning is informal (one entry per shipped milestone). Newest first.
 
 ## Shipped
 
-### v0.8 — Retail (small) barcode + fake-ticket safety · 2026-06-22
+### v0.9 — Small-barcode handling corrected · 2026-06-22
+- Removed game-guessing from the small **retail (UPC)** barcode. There's no
+  reliable public UPC→game table and one seeded mapping led to **wrong games**
+  (e.g. showing "Power 10X" for a Goooalll ticket after a stray link). The small
+  barcode now just identifies itself as the retail code and points the clerk to
+  the **long** barcode, which identifies every game correctly — right for all games.
+- `classify()` still recognizes retail vs ticket vs invalid; the long barcode
+  remains the source of truth for game / pack / inventory / sales.
+
+### v0.8 — Two-barcode awareness + fake-ticket safety · 2026-06-22
 Tickets carry **two** barcodes: the long **validation** code (game-pack-index)
 and a small **UPC-A retail** code; they hold different data.
 - `barcode.classify()` routes any scan to **ticket / retail / invalid** by length.
-- Scanning the **small UPC** resolves to its game via a learnable alias map
-  (seeded with the real `814605026613 → 01967 Goooalll`). Unknown UPCs offer a
-  one-time **"link to game"**; the link is remembered.
-- **Leading-zero fix:** scanners return UPC-A as EAN-13 with a `0` prefix
-  (`0814605026613`); retail codes are now canonicalized so 12- and 13-digit
-  forms match.
 - The retail code has **no pack number**, so inventory / activate / update /
   end-day tell the clerk to scan the long barcode instead.
 - **Warnings:** a clear modal for unrecognized / likely-fake barcodes, and an
   amber warning when a scanned ticket's game isn't in the NJ catalog.
+- (A learnable UPC→game alias was tried here and reverted in v0.9 — see above.)
 
 ### v0.7 — Mobile camera hardening · 2026-06-22
 - High-resolution rear camera (1920×1080 ideal) + **continuous autofocus** to

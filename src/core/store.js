@@ -32,22 +32,6 @@
     const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
     return local.toISOString().slice(0, 16);
   }
-  // Canonical retail code: a UPC-A (12) is the same product as the EAN-13 form
-  // with a leading zero (13). Scanners/BarcodeDetector often return the 13-digit
-  // form, so normalize to 12 so aliases match regardless.
-  function canonRetail(code) {
-    let d = String(code == null ? '' : code).replace(/\D/g, '');
-    if (d.length === 13 && d.charAt(0) === '0') d = d.slice(1);
-    return d;
-  }
-
-  // Known retail (UPC) barcode -> game number. The small barcode on a ticket is
-  // a retail UPC; this lets a scan of it resolve to the game. Learned aliases
-  // (settings.upcAliases) take priority over these bundled seeds.
-  const SEED_UPC_ALIASES = {
-    '814605026613': '01967', // Goooalll! For The Win ($5) — from a real ticket
-  };
-
   function defaultState(seedCatalog) {
     return {
       version: STATE_VERSION,
@@ -56,7 +40,6 @@
         barcodeWidths: Object.assign({}, barcode.DEFAULT_WIDTHS),
         remoteGamesUrl: '',
         currency: 'USD',
-        upcAliases: {}, // user-taught retail-UPC -> game number
       },
       catalog: seedCatalog || { games: {} },
       gameOverrides: {},
@@ -105,19 +88,6 @@
     }
     function lookupGame(gameNumber) {
       return gameDb().lookup(gameNumber);
-    }
-    // Resolve a retail (UPC) barcode to its game. Returns the game record or null.
-    function resolveRetailCode(code) {
-      const aliases = (state.settings && state.settings.upcAliases) || {};
-      const c = canonRetail(code);
-      const gameNumber = aliases[c] || aliases[code] || SEED_UPC_ALIASES[c] || SEED_UPC_ALIASES[code] || null;
-      return gameNumber ? lookupGame(gameNumber) : null;
-    }
-    // Teach the app that a retail barcode belongs to a game (stored canonical).
-    function linkRetailCode(code, gameNumber) {
-      if (!state.settings.upcAliases) state.settings.upcAliases = {};
-      state.settings.upcAliases[canonRetail(code)] = String(gameNumber);
-      persist();
     }
 
     // ---- bins ------------------------------------------------------------
@@ -702,8 +672,6 @@
       // games
       gameDb,
       lookupGame,
-      resolveRetailCode,
-      linkRetailCode,
       upsertGame,
       setCatalog,
       // bins
