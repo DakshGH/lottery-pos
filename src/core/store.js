@@ -224,8 +224,11 @@
      * @param packId   pack already in inventory (or freshly added)
      * @param binId    destination bin
      * @param startIdx tickets already sold in the new pack (usually 0)
+     * @param replaceMode  what happens to a pack already in the bin:
+     *   'soldout' (default) — it ran out; count its remaining tickets as sold.
+     *   'inventory'         — swap; move it back to inventory, count only sold.
      */
-    function activatePack(packId, binId, startIdx) {
+    function activatePack(packId, binId, startIdx, replaceMode) {
       const pack = getPack(packId);
       if (!pack) throw new Error('Pack not found.');
       if (!getBin(binId)) throw new Error('Bin not found.');
@@ -235,9 +238,12 @@
       }
       startIdx = clampIndex(startIdx, pack.ticketsPerPack);
 
-      // roll over whatever is currently in the bin
+      // handle whatever is currently in the bin
       const current = activePackInBin(binId);
-      if (current) markSoldOut(current.id, { reason: 'replaced' });
+      if (current) {
+        if (replaceMode === 'inventory') returnActivePackToInventory(current.id);
+        else markSoldOut(current.id, { reason: 'replaced' });
+      }
 
       pack.status = 'active';
       pack.activated = true;
@@ -333,6 +339,33 @@
       return markSoldOut(packId, { reason: 'fullpack' });
     }
 
+    /**
+     * Take the active pack out of a bin and back to inventory, counting only the
+     * tickets it actually sold today (start -> currentIndex). The unsold
+     * remainder is kept with the pack, never counted as sales. Used when a pack
+     * is swapped out (not sold out).
+     */
+    function returnActivePackToInventory(packId) {
+      const pack = getPack(packId);
+      if (!pack || pack.status !== 'active') return;
+      const day = currentDay();
+      const binId = pack.binId;
+      if (day && binId && day.bins[binId]) {
+        const segs = day.bins[binId].segments;
+        const open = segs[segs.length - 1];
+        if (open && open.packId === pack.id && !open.completed) {
+          // close at currentIndex so it counts (currentIndex - startIndex) only
+          open.endIndex = clampIndex(pack.currentIndex || open.startIndex, open.ticketsPerPack);
+        }
+      }
+      pack._prev = { status: 'active', binId: binId, currentIndex: pack.currentIndex, activated: true };
+      pack.status = 'inventory';
+      pack.activated = false;
+      pack.binId = null;
+      // keep currentIndex so the pack's progress is preserved for re-activation
+      persist();
+    }
+
     /** Reverse an accidental activation: active pack -> back to inventory. */
     function reverseActivation(packId) {
       const pack = getPack(packId);
@@ -354,33 +387,61 @@
       return pack;
     }
 
-    /** Reverse a sold-out pack: restore it to its previous state. */
+    /**
+     * Reverse a sold-out pack, restoring its original state and undoing its
+     * sales impact. For a rollover replacement, this also sends whatever pack
+     * replaced it back to inventory (undoing the whole replacement) and restores
+     * this pack to its bin.
+     */
     function reverseSoldOut(packId) {
       const pack = getPack(packId);
       if (!pack || pack.status !== 'soldout') throw new Error('Pack is not sold out.');
-      // remove any full-pack record tied to this pack in its day
-      if (pack.soldOutDayId) {
-        const day = state.days.find((d) => d.id === pack.soldOutDayId);
-        if (day && day.fullPacks) {
-          day.fullPacks = day.fullPacks.filter((fp) => fp.packId !== pack.id);
-        }
+      const day = pack.soldOutDayId ? getDay(pack.soldOutDayId) : null;
+
+      // drop any full-pack record tied to this pack in its day
+      if (day && day.fullPacks) {
+        day.fullPacks = day.fullPacks.filter((fp) => fp.packId !== pack.id);
       }
+
       const prev = pack._prev || {};
-      // only restore to active if its bin is still free
       const wantBin = pack.soldOutBinId;
-      const binFree = wantBin && isBinEmpty(wantBin);
-      if (prev.status === 'active' && binFree) {
+      const cur = currentDay();
+      const isCurrentDay = !!(day && cur && day.id === cur.id);
+
+      // If a different pack now occupies the bin (it replaced this one), undo
+      // that activation so this pack can return to its slot — but only within
+      // the same open day, otherwise we'd disturb a later day's bin.
+      if (wantBin && isCurrentDay) {
+        const occupant = activePackInBin(wantBin);
+        if (occupant && occupant.id !== pack.id) reverseActivation(occupant.id);
+      }
+
+      const canRestore = prev.status === 'active' && wantBin && isBinEmpty(wantBin);
+      if (canRestore) {
         pack.status = 'active';
         pack.activated = true;
         pack.binId = wantBin;
         pack.currentIndex = prev.currentIndex || 0;
+        // re-open this pack's day segment so it counts only its actual sales
+        if (day && day.bins[wantBin]) {
+          const seg = day.bins[wantBin].segments.find((s) => s.packId === pack.id);
+          if (seg) { seg.completed = false; seg.endIndex = clampIndex(pack.currentIndex, seg.ticketsPerPack); }
+        }
       } else {
         pack.status = 'inventory';
         pack.activated = false;
         pack.binId = null;
+        // remove this pack's (inflated) segment contribution from the day
+        if (day && wantBin && day.bins[wantBin]) {
+          const segs = day.bins[wantBin].segments;
+          const i = segs.findIndex((s) => s.packId === pack.id);
+          if (i !== -1) segs.splice(i, 1);
+          if (!segs.length) delete day.bins[wantBin];
+        }
       }
       pack.soldOut = false;
       delete pack._prev;
+      if (day) day.computed = engine.computeDay(day);
       persist();
       return pack;
     }
