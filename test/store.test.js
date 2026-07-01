@@ -39,35 +39,23 @@ function test(name, fn) {
   catch (e) { console.error('FAIL  ' + name + '\n      ' + e.message); process.exitCode = 1; }
 }
 const scratch = (s) => E.computeDay(s.currentDay()).scratchSales;
-function activate(s, code, binId, idx, mode) {
+function activate(s, code, binId, idx) {
   const p = s.addToInventory(B.parse(code)).pack;
-  return s.activatePack(p.id, binId, idx || 0, mode);
+  return s.activatePack(p.id, binId, idx || 0);
 }
 
-// ---- the reported bug: replacing a non-empty pack ------------------------
+// ---- replacing a pack in an occupied bin (rollover) ----------------------
 
-test('replace mode "soldout" counts the remaining tickets (explicit)', (s) => {
+test('replacing an occupied bin marks the old pack sold out (counts remaining)', (s) => {
   const b1 = s.addBin('1'), b2 = s.addBin('2');
   activate(s, '01960-1000001-000', b1.id, 0);     // 100X
   activate(s, '01941-5000001-000', b2.id, 0);     // Jackpot
   s.startDay('2026-06-19T09:00');
   s.recordEndScan(b1.id, 9);                        // $180 baseline
   assert.strictEqual(scratch(s), 180);
-  activate(s, '01967-2000001-000', b2.id, 0, 'soldout'); // Jackpot ran out (+$600)
+  activate(s, '01967-2000001-000', b2.id, 0);       // Jackpot rolled over (+$600)
   assert.strictEqual(scratch(s), 780);
   assert.strictEqual(s.listSoldOut().length, 1);
-});
-
-test('replace mode "inventory" (swap) adds NO phantom sales', (s) => {
-  const b1 = s.addBin('1'), b2 = s.addBin('2');
-  activate(s, '01960-1000001-000', b1.id, 0);
-  activate(s, '01941-5000001-000', b2.id, 0);
-  s.startDay('2026-06-19T09:00');
-  s.recordEndScan(b1.id, 9);
-  activate(s, '01967-2000001-000', b2.id, 0, 'inventory'); // swap, not sold out
-  assert.strictEqual(scratch(s), 180, 'sales unchanged on a swap');
-  assert.strictEqual(s.listSoldOut().length, 0, 'nothing sold out');
-  assert.ok(s.listInventory().some((p) => p.packKey === '01941-5000001'), 'Jackpot back in inventory');
 });
 
 test('reversing a rollover restores the bin and reverts earnings', (s) => {
@@ -76,7 +64,7 @@ test('reversing a rollover restores the bin and reverts earnings', (s) => {
   activate(s, '01941-5000001-000', b2.id, 0);
   s.startDay('2026-06-19T09:00');
   s.recordEndScan(b1.id, 9);
-  activate(s, '01967-2000001-000', b2.id, 0, 'soldout'); // +$600
+  activate(s, '01967-2000001-000', b2.id, 0);       // +$600
   assert.strictEqual(scratch(s), 780);
   s.reverseSoldOut(s.listSoldOut()[0].id);
   assert.strictEqual(scratch(s), 180, 'earnings reverted');

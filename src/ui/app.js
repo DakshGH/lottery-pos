@@ -915,21 +915,16 @@
     });
   }
 
-  // When activating into an occupied bin, the clerk must say what happened to
-  // the pack already there: it ran out (sold out) or it's being swapped.
-  function dispositionHTML(binId) {
+  // A short note shown when the destination bin already holds a pack — it will
+  // be marked sold out (its remaining tickets counted as sold).
+  function replaceNote(binId) {
     const cur = store.activePackInBin(binId);
     if (!cur) return '';
-    const tpp = cur.ticketsPerPack || 0, idx = cur.currentIndex || 0;
-    const remaining = Math.max(0, tpp - idx);
+    const remaining = Math.max(0, (cur.ticketsPerPack || 0) - (cur.currentIndex || 0));
     const remVal = remaining * (cur.price || 0);
-    return '<div class="field" id="act-disp"><label>' + esc(cur.name) + ' is already in this bin (idx ' + idx + ' / ' + (tpp - 1) + ') — what happened to it?</label>' +
-      '<label class="radio-row"><input type="radio" name="disp" value="soldout"> <span><b>Sold out</b> — it ran out; count its ' + remaining + ' remaining tickets as sold (+' + money(remVal) + ')</span></label>' +
-      '<label class="radio-row"><input type="radio" name="disp" value="inventory"> <span><b>Swap out</b> — move it back to inventory; count only what actually sold</span></label></div>';
-  }
-  function readDisposition(root) {
-    const sel = root.querySelector('input[name="disp"]:checked');
-    return sel ? sel.value : null;
+    return '<div class="warn-banner amber" id="act-note">' + esc(cur.name) +
+      ' is already in this bin — activating marks it <b>sold out</b> and counts its ' +
+      remaining + ' remaining tickets as sold (+' + money(remVal) + ').</div>';
   }
 
   // Activate INTO a specific bin (scan or pick from inventory)
@@ -944,12 +939,11 @@
         '<div id="act-ready" class="muted" style="margin:12px 0 4px">Scan a pack — new packs are added to inventory automatically.</div>' +
         (options ? '<div class="field" style="margin-top:14px"><label>Or pick from inventory</label><select id="act-pick"><option value="">— choose —</option>' + options + '</select></div>' : '') +
         '<div class="field"><label>Starting index (tickets already sold)</label><input id="act-start" class="mono" value="0"></div>' +
-        dispositionHTML(binId),
+        replaceNote(binId),
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="act-go">Activate</button>',
       onMount: (root) => {
         const startInp = root.querySelector('#act-start');
         const readyEl = root.querySelector('#act-ready');
-        const occupied = !!store.activePackInBin(binId);
         let scannedPackId = null;
         root.querySelector('#act-scanbtn').onclick = async () => {
           const raw = await POS.scanner.scanOnce({ title: 'Scan new pack', mask: fullMask() });
@@ -975,9 +969,7 @@
           const pick = root.querySelector('#act-pick');
           if (!packId && pick && pick.value) packId = pick.value;
           if (!packId) return toast('No pack', 'Scan or choose a pack first', 'warn');
-          const disp = occupied ? readDisposition(root) : null;
-          if (occupied && !disp) return toast('Choose one', 'Say what happened to the pack already in this bin', 'warn');
-          store.activatePack(packId, binId, parseInt(startInp.value, 10) || 0, disp);
+          store.activatePack(packId, binId, parseInt(startInp.value, 10) || 0);
           closeModal(); toast('Activated', 'Pack is now selling in ' + bin.name, 'ok');
         };
       },
@@ -997,20 +989,16 @@
       bodyHTML:
         '<div class="field"><label>Destination bin</label><select id="act-bin">' + opts + '</select></div>' +
         '<div class="field"><label>Starting index</label><input id="act-start" class="mono" value="0"></div>' +
-        '<div id="act-disp-wrap"></div>',
+        '<div id="act-note-wrap"></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="act-go">Activate</button>',
       onMount: (root) => {
         const binSel = root.querySelector('#act-bin');
-        const dispWrap = root.querySelector('#act-disp-wrap');
-        const refreshDisp = () => { dispWrap.innerHTML = dispositionHTML(binSel.value); };
-        binSel.addEventListener('change', refreshDisp);
-        refreshDisp();
+        const noteWrap = root.querySelector('#act-note-wrap');
+        const refreshNote = () => { noteWrap.innerHTML = replaceNote(binSel.value); };
+        binSel.addEventListener('change', refreshNote);
+        refreshNote();
         root.querySelector('#act-go').onclick = () => {
-          const binId = binSel.value;
-          const occupied = !!store.activePackInBin(binId);
-          const disp = occupied ? readDisposition(root) : null;
-          if (occupied && !disp) return toast('Choose one', 'Say what happened to the pack already in that bin', 'warn');
-          store.activatePack(packId, binId, parseInt(root.querySelector('#act-start').value, 10) || 0, disp);
+          store.activatePack(packId, binSel.value, parseInt(root.querySelector('#act-start').value, 10) || 0);
           closeModal(); toast('Activated', '', 'ok');
         };
       },

@@ -13,18 +13,23 @@ Versioning is informal (one entry per shipped milestone). Newest first.
 
 ## Shipped
 
+### v0.11 — Simpler replace (swap option removed) · 2026-06-22
+- Per store feedback, removed the "swap out" choice when replacing a pack.
+  Activating into an occupied bin is now always a **rollover** (old pack → sold
+  out). The activate dialog shows a note of exactly what it adds (e.g. *"+$600"*)
+  so it's explicit, and **Reverse** cleanly undoes it if it was a mistake.
+
 ### v0.10 — Rollover / replace / reverse fixes · 2026-06-22
 A reported bug surfaced a cluster of defects in the replace flow:
 - **Phantom revenue:** activating a pack into an occupied bin marked the old
   pack's segment "completed", counting *all* its remaining tickets as sold —
-  e.g. a fresh $30 pack added a fake **+$600**. Replacing now **asks** what
-  happened to the old pack: **"sold out (ran out)"** (counts the remainder, the
-  real rollover) or **"swap out"** (back to inventory, counts only what sold).
+  e.g. a fresh $30 pack added a fake **+$600**. (v0.10 added a "sold out" vs
+  "swap" choice; v0.11 simplified this back to rollover-only with a clear note.)
 - **Broken reverse:** reversing a sold-out pack dumped it to inventory and left
   earnings inflated. `reverseSoldOut` now **undoes the replacement** (sends the
   replacer back to inventory, restores the pack to its bin) and **reverts the
   sales**. Cross-day reversals correct the past day without disturbing later days.
-- Added a Node store-test harness (`test/store.test.js`) — 4 regression tests.
+- Added a Node store-test harness (`test/store.test.js`).
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the full data model & flows.
 
 ### v0.9 — Small-barcode handling corrected · 2026-06-22

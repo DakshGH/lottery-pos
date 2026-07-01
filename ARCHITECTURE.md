@@ -168,16 +168,13 @@ every affected day is recomputed. So correcting one number ripples forward.
 | **Trash / Restore** | inventory delete is soft (recoverable in Trash) |
 
 ### Replace (activating into an occupied bin) — important
-When a bin already has a pack, the app **asks what happened to it** (because it
-cannot know):
-- **"Sold out (ran out)"** → `markSoldOut(reason:'replaced')`, segment marked
-  `completed` (counts the remaining tickets as sold). This is the real rollover.
-- **"Swap out"** → `returnActivePackToInventory`: the segment closes at
-  `currentIndex` (counts only what actually sold), and the pack goes back to
-  inventory keeping its progress. **No phantom revenue.**
-
-This choice is the fix for the v0.10 "+$600" bug — never silently count unsold
-tickets as sales.
+When a bin already has a pack, activating a new one is a **rollover**: the old
+pack is marked sold out via `markSoldOut(reason:'replaced')`, its segment marked
+`completed` (its remaining tickets counted as sold). This matches real operation
+— you replace a pack when it has run out. The activate dialog shows a note of
+exactly how much this adds (e.g. *"marks it sold out … +$600"*) so it's never a
+surprise. If it was a mistake, use **Reverse** on the sold-out pack (below),
+which fully undoes it.
 
 ### Reverse a sold-out pack — important
 `reverseSoldOut` fully undoes a sale:

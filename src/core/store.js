@@ -224,11 +224,8 @@
      * @param packId   pack already in inventory (or freshly added)
      * @param binId    destination bin
      * @param startIdx tickets already sold in the new pack (usually 0)
-     * @param replaceMode  what happens to a pack already in the bin:
-     *   'soldout' (default) — it ran out; count its remaining tickets as sold.
-     *   'inventory'         — swap; move it back to inventory, count only sold.
      */
-    function activatePack(packId, binId, startIdx, replaceMode) {
+    function activatePack(packId, binId, startIdx) {
       const pack = getPack(packId);
       if (!pack) throw new Error('Pack not found.');
       if (!getBin(binId)) throw new Error('Bin not found.');
@@ -238,12 +235,9 @@
       }
       startIdx = clampIndex(startIdx, pack.ticketsPerPack);
 
-      // handle whatever is currently in the bin
+      // a pack already in the bin is a rollover — mark it sold out
       const current = activePackInBin(binId);
-      if (current) {
-        if (replaceMode === 'inventory') returnActivePackToInventory(current.id);
-        else markSoldOut(current.id, { reason: 'replaced' });
-      }
+      if (current) markSoldOut(current.id, { reason: 'replaced' });
 
       pack.status = 'active';
       pack.activated = true;
@@ -337,33 +331,6 @@
       if (!pack) throw new Error('Pack not found.');
       if (!pack.knownGame) throw new Error('Unknown game — add its details first.');
       return markSoldOut(packId, { reason: 'fullpack' });
-    }
-
-    /**
-     * Take the active pack out of a bin and back to inventory, counting only the
-     * tickets it actually sold today (start -> currentIndex). The unsold
-     * remainder is kept with the pack, never counted as sales. Used when a pack
-     * is swapped out (not sold out).
-     */
-    function returnActivePackToInventory(packId) {
-      const pack = getPack(packId);
-      if (!pack || pack.status !== 'active') return;
-      const day = currentDay();
-      const binId = pack.binId;
-      if (day && binId && day.bins[binId]) {
-        const segs = day.bins[binId].segments;
-        const open = segs[segs.length - 1];
-        if (open && open.packId === pack.id && !open.completed) {
-          // close at currentIndex so it counts (currentIndex - startIndex) only
-          open.endIndex = clampIndex(pack.currentIndex || open.startIndex, open.ticketsPerPack);
-        }
-      }
-      pack._prev = { status: 'active', binId: binId, currentIndex: pack.currentIndex, activated: true };
-      pack.status = 'inventory';
-      pack.activated = false;
-      pack.binId = null;
-      // keep currentIndex so the pack's progress is preserved for re-activation
-      persist();
     }
 
     /** Reverse an accidental activation: active pack -> back to inventory. */
