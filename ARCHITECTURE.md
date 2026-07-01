@@ -187,6 +187,13 @@ which fully undoes it.
 Cross-day reversals correct the *past* day's totals without disturbing later
 days (the pack returns to inventory rather than reclaiming a now-busy bin).
 
+### Confirmations (money safety)
+Actions that change sales or are hard to undo route through a reusable
+`confirm({ title, message, impact, onConfirm })` dialog that shows the dollar
+impact before committing: rollover-activate (sell-out + $N), reverse sold-out,
+undo activate, quick-scan set-index, sell full pack, remove-from-inventory,
+delete-forever, empty-trash. Nothing money-related commits on a single click.
+
 ---
 
 ## 7. Barcodes & scanning

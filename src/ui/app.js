@@ -82,6 +82,90 @@
     if (modalMount) { modalMount.remove(); modalMount = null; }
   }
 
+  /**
+   * Confirmation dialog for money / hard-to-undo actions. Shows a clear summary
+   * (and an optional highlighted impact line) with Cancel + a confirm button.
+   *   confirm({ title, message, impact, impactKind, confirmLabel, kind, onConfirm })
+   *     impactKind: 'amber' (default) | 'danger'   kind: 'primary' | 'danger' | 'green'
+   */
+  function confirm(opts) {
+    const kind = opts.kind || 'primary';
+    const impact = opts.impact
+      ? '<div class="warn-banner ' + (opts.impactKind === 'danger' ? '' : 'amber') + '">' + opts.impact + '</div>'
+      : '';
+    openModal({
+      title: opts.title || 'Please confirm',
+      bodyHTML: '<p style="margin-top:0">' + (opts.message || 'Are you sure?') + '</p>' + impact,
+      footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button>' +
+        '<button class="btn ' + kind + '" id="cf-yes">' + esc(opts.confirmLabel || 'Confirm') + '</button>',
+      onMount: (root) => {
+        const y = root.querySelector('#cf-yes');
+        y.focus();
+        y.onclick = () => { closeModal(); try { opts.onConfirm(); } catch (e) { toast('Error', e.message, 'err'); } };
+      },
+    });
+  }
+
+  function confirmReverseActivation(packId) {
+    const p = store.getPack(packId); if (!p) return;
+    const bin = store.getBin(p.binId);
+    confirm({
+      title: 'Undo activation?',
+      message: 'Return <b>' + esc(p.name) + '</b> (pack ' + esc(p.packNumber) + ') to inventory' + (bin ? ' and empty ' + esc(bin.name) : '') + '?',
+      impact: 'Any tickets it recorded selling today are removed from the totals.',
+      confirmLabel: 'Undo activate', kind: 'danger',
+      onConfirm: () => { store.reverseActivation(packId); toast('Activation undone', 'Pack returned to inventory', 'ok'); },
+    });
+  }
+  function confirmRemoveInv(packId) {
+    const p = store.getPack(packId); if (!p) return;
+    confirm({
+      title: 'Move to Trash?',
+      message: 'Remove <b>' + esc(p.name) + '</b> (pack ' + esc(p.packNumber) + ') from inventory?',
+      impact: 'You can restore it from Trash if this was a mistake.',
+      confirmLabel: 'Move to Trash', kind: 'danger',
+      onConfirm: () => { store.removePackFromInventory(packId); toast('Moved to Trash', 'Restore it from Trash if needed', 'ok'); },
+    });
+  }
+  function confirmDeleteForever(packId) {
+    const p = store.getPack(packId); if (!p) return;
+    confirm({
+      title: 'Delete permanently?',
+      message: 'Permanently delete <b>' + esc(p.name) + '</b> (pack ' + esc(p.packNumber) + ')?',
+      impact: 'This cannot be undone.', impactKind: 'danger',
+      confirmLabel: 'Delete forever', kind: 'danger',
+      onConfirm: () => { store.deletePackForever(packId); trashFlow(); },
+    });
+  }
+  function confirmReverseSoldOut(packId) {
+    const p = store.getPack(packId); if (!p) return;
+    const face = (p.ticketsPerPack || 0) * (p.price || 0);
+    const wasReplaced = p.soldOutReason === 'replaced';
+    confirm({
+      title: 'Reverse sold-out?',
+      message: 'Restore <b>' + esc(p.name) + '</b> (pack ' + esc(p.packNumber) + ') and undo its sale?',
+      impact: 'Removes up to ' + money(face) + ' from the totals' + (wasReplaced ? ' and sends the pack that replaced it back to inventory.' : '.'),
+      confirmLabel: 'Reverse sold-out', kind: 'primary',
+      onConfirm: () => { store.reverseSoldOut(packId); toast('Reversed', 'Pack restored', 'ok'); },
+    });
+  }
+  // Activate, confirming first only when it replaces (sells out) an existing pack.
+  function confirmActivate(packId, binId, startIdx, onDone) {
+    const doIt = () => { store.activatePack(packId, binId, startIdx); closeModal(); if (onDone) onDone(); };
+    const cur = store.activePackInBin(binId);
+    if (!cur) return doIt(); // empty bin — no money impact, the dialog was the confirm
+    const remaining = Math.max(0, (cur.ticketsPerPack || 0) - (cur.currentIndex || 0));
+    const remVal = remaining * (cur.price || 0);
+    const np = store.getPack(packId);
+    confirm({
+      title: 'Replace pack in ' + esc(store.getBin(binId).name) + '?',
+      message: 'Activate <b>' + esc(np ? np.name : 'this pack') + '</b>. <b>' + esc(cur.name) + '</b> will be marked <b>sold out</b>.',
+      impact: 'Counts ' + esc(cur.name) + '’s ' + remaining + ' remaining tickets as sold (+' + money(remVal) + ').',
+      confirmLabel: 'Sell out & activate', kind: 'primary',
+      onConfirm: doIt,
+    });
+  }
+
   // ===================================================================== //
   //  BOOT                                                                 //
   // ===================================================================== //
@@ -328,7 +412,7 @@
         '<div class="bin-top"><span class="bin-pill">' + esc(bin.name) + '</span>' +
           '<span class="gameno">' + esc(pack.gameNumber) + '</span></div>' +
         '<div class="game">' + esc(pack.name) + ' <span class="price">' + money(pack.price) + '</span></div>' +
-        '<div class="meta mono">pack ' + esc(pack.packNumber) + ' · idx ' + idx + ' / ' + (tpp - 1) + '</div>' +
+        '<div class="meta mono">pack ' + esc(pack.packNumber) + ' · sold ' + idx + ' / ' + tpp + '</div>' +
         '<div class="progress"><i style="width:' + pct + '%"></i></div>' +
         '<div class="stats">' +
           '<div class="stat"><div class="n">' + soldToday + '</div><div class="l">sold today</div></div>' +
@@ -697,19 +781,19 @@
       case 'move-pack': return movePackFlow(d.bin);
       case 'swap-bin': return swapBinFlow(d.bin);
       case 'update-index': return updateIndexFlow(d.bin);
-      case 'reverse-activation': store.reverseActivation(d.pack); return toast('Activation undone', 'Pack returned to inventory', 'ok');
+      case 'reverse-activation': return confirmReverseActivation(d.pack);
       case 'full-pack-active': return fullPackFlow(d.pack);
       case 'full-pack-inv': return fullPackFlow(d.pack);
       // inventory
       case 'add-inventory': return addInventoryFlow();
-      case 'remove-inv': store.removePackFromInventory(d.pack); toast('Moved to Trash', 'Restore it from Trash if needed', 'ok'); return;
+      case 'remove-inv': return confirmRemoveInv(d.pack);
       case 'open-trash': return trashFlow();
       case 'restore-trash': store.restoreFromTrash(d.pack); toast('Restored', '', 'ok'); trashFlow(); return;
-      case 'delete-forever': store.deletePackForever(d.pack); trashFlow(); return;
-      case 'empty-trash': store.emptyTrash(); closeModal(); toast('Trash emptied', '', 'ok'); return;
+      case 'delete-forever': return confirmDeleteForever(d.pack);
+      case 'empty-trash': return confirm({ title: 'Empty Trash?', message: 'Permanently delete all packs in Trash?', impact: 'This cannot be undone.', impactKind: 'danger', confirmLabel: 'Empty Trash', kind: 'danger', onConfirm: () => { store.emptyTrash(); toast('Trash emptied', '', 'ok'); } });
       case 'define-game': return defineGameFlow(d.game);
       // soldout
-      case 'reverse-soldout': store.reverseSoldOut(d.pack); return toast('Reversed', 'Pack restored', 'ok');
+      case 'reverse-soldout': return confirmReverseSoldOut(d.pack);
       // history
       case 'open-day': openDayId = d.day; return go('day');
       case 'edit-seg': return editSegFlow(d.day, d.bin, +d.seg, d.field, el);
@@ -884,9 +968,21 @@
     };
     const setIdx = root.querySelector('[data-action="qs-set-index"]');
     if (setIdx) setIdx.onclick = () => {
-      store.recordEndScan(setIdx.dataset.bin, +setIdx.dataset.idx);
-      toast('Index updated', 'Set to ' + setIdx.dataset.idx, 'ok');
-      closeModal();
+      const binId = setIdx.dataset.bin, idx = +setIdx.dataset.idx;
+      const p = store.activePackInBin(binId), day = store.currentDay();
+      let impact = '';
+      if (p && day && day.bins[binId]) {
+        const seg = day.bins[binId].segments.slice(-1)[0];
+        const sold = Math.max(0, idx - (seg ? seg.startIndex : 0));
+        impact = 'Records ' + sold + ' ticket' + (sold === 1 ? '' : 's') + ' sold today for ' + esc(p.name) + ' (' + money(sold * (p.price || 0)) + ').';
+      }
+      confirm({
+        title: 'Update index?',
+        message: 'Set this bin’s recorded ticket index to <b>' + idx + '</b>?',
+        impact: impact,
+        confirmLabel: 'Update index', kind: 'primary',
+        onConfirm: () => { store.recordEndScan(binId, idx); toast('Index updated', 'Set to ' + idx, 'ok'); },
+      });
     };
   }
 
@@ -969,8 +1065,8 @@
           const pick = root.querySelector('#act-pick');
           if (!packId && pick && pick.value) packId = pick.value;
           if (!packId) return toast('No pack', 'Scan or choose a pack first', 'warn');
-          store.activatePack(packId, binId, parseInt(startInp.value, 10) || 0);
-          closeModal(); toast('Activated', 'Pack is now selling in ' + bin.name, 'ok');
+          const startIdx = parseInt(startInp.value, 10) || 0;
+          confirmActivate(packId, binId, startIdx, () => { toast('Activated', 'Pack is now selling in ' + bin.name, 'ok'); });
         };
       },
     });
@@ -998,8 +1094,8 @@
         binSel.addEventListener('change', refreshNote);
         refreshNote();
         root.querySelector('#act-go').onclick = () => {
-          store.activatePack(packId, binSel.value, parseInt(root.querySelector('#act-start').value, 10) || 0);
-          closeModal(); toast('Activated', '', 'ok');
+          const startIdx = parseInt(root.querySelector('#act-start').value, 10) || 0;
+          confirmActivate(packId, binSel.value, startIdx, () => toast('Activated', '', 'ok'));
         };
       },
     });
@@ -1071,7 +1167,7 @@
       title: 'Update index — ' + esc(store.getBin(binId).name),
       bodyHTML:
         '<button class="btn primary block lg" id="ui-scanbtn">' + ICON.cam + ' Scan this bin\'s ticket</button>' +
-        '<div class="field" style="margin-top:16px"><label>Current index (0–' + (pack.ticketsPerPack - 1) + ')</label><input id="ui-idx" class="mono" value="' + (pack.currentIndex || 0) + '"></div>',
+        '<div class="field" style="margin-top:16px"><label>Tickets sold (0–' + pack.ticketsPerPack + ')</label><input id="ui-idx" class="mono" value="' + (pack.currentIndex || 0) + '"></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="ui-go">Save</button>',
       onMount: (root) => {
         const idx = root.querySelector('#ui-idx');
@@ -1140,17 +1236,32 @@
         '<div class="field"><label>Game number (5 digits)</label><input id="g-num" class="mono" value="' + esc(gameNumber || '') + '" ' + (gameNumber ? 'readonly' : '') + ' placeholder="01975"></div>' +
         '<div class="field"><label>Game name</label><input id="g-name" value="' + esc(existing ? existing.name : '') + '" placeholder="500X The Cash"></div>' +
         '<div class="field"><label>Ticket price</label><select id="g-price">' +
-          [1, 2, 3, 5, 10, 20, 25, 30, 40].map((p) => '<option value="' + p + '" ' + (existing && existing.price === p ? 'selected' : '') + '>' + money(p) + ' (' + engine.ticketsPerPack(p) + ' tickets/pack)</option>').join('') +
-        '</select></div>',
+          [1, 2, 3, 5, 10, 20, 25, 30, 40].map((p) => '<option value="' + p + '" ' + (existing && existing.price === p ? 'selected' : '') + '>' + money(p) + ' (default ' + engine.ticketsPerPack(p) + ' tickets/pack)</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label>Tickets per pack (real count for this game)</label>' +
+          '<input id="g-tpp" class="mono" value="' + (existing ? existing.ticketsPerPack : '') + '" placeholder="auto from price">' +
+          '<div class="hint">Leave blank to use the price default. Set it to the real number of tickets in this game\'s pack.</div></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="g-go">Save game</button>',
       onMount: (root) => {
         onlyDigits(root.querySelector('#g-num'), widths().game);
+        onlyDigits(root.querySelector('#g-tpp'), 4);
+        const priceSel = root.querySelector('#g-price');
+        const tppInp = root.querySelector('#g-tpp');
+        // show the price-derived default as the placeholder as price changes
+        priceSel.addEventListener('change', () => { tppInp.placeholder = 'auto (' + engine.ticketsPerPack(parseInt(priceSel.value, 10)) + ')'; });
         root.querySelector('#g-go').onclick = () => {
           const num = root.querySelector('#g-num').value.trim();
           const name = root.querySelector('#g-name').value.trim();
-          const price = parseInt(root.querySelector('#g-price').value, 10);
+          const price = parseInt(priceSel.value, 10);
+          const tppRaw = tppInp.value.trim();
           if (!num || !name) return toast('Missing info', 'Enter a game number and name', 'warn');
-          store.upsertGame(num, { name, price });
+          const entry = { name, price };
+          if (tppRaw) {
+            const tpp = parseInt(tppRaw, 10);
+            if (!tpp || tpp < 1) return toast('Bad count', 'Tickets per pack must be a positive number', 'warn');
+            entry.ticketsPerPack = tpp;
+          }
+          store.upsertGame(num, entry);
           closeModal(); toast('Game saved', name, 'ok');
         };
       },
@@ -1214,7 +1325,7 @@
       const segs = day.bins[b.id].segments;
       const open = segs[segs.length - 1];
       return '<div class="field"><label>' + esc(b.name) + ' — ' + esc(open.name || open.gameNumber) +
-        ' <span class="muted">(start ' + open.startIndex + ', max ' + (open.ticketsPerPack - 1) + ')</span></label>' +
+        ' <span class="muted">(start ' + open.startIndex + ', full ' + open.ticketsPerPack + ')</span></label>' +
         '<input class="mono ed-end" data-bin="' + b.id + '" value="' + open.endIndex + '" placeholder="end index"></div>';
     }).join('');
     openModal({

@@ -13,6 +13,17 @@ Versioning is informal (one entry per shipped milestone). Newest first.
 
 ## Shipped
 
+### v0.12 — Confirmations on money actions · 2026-06-22
+Because every mistake here moves money, the actions that add/remove sales or are
+hard to undo now ask for confirmation first (showing the dollar impact):
+- **Activate that replaces a pack** (rollover) — shows "X will be marked sold
+  out, +$N" before committing. (Plain activate into an empty bin still proceeds.)
+- **Reverse sold-out**, **Undo activate**, **quick-scan Set index** — confirm
+  with the sales impact.
+- **Sell full pack** already confirmed; **Remove from inventory**, **Delete
+  forever**, **Empty Trash** now confirm too.
+Added a reusable `confirm({ title, message, impact, onConfirm })` dialog.
+
 ### v0.11 — Simpler replace (swap option removed) · 2026-06-22
 - Per store feedback, removed the "swap out" choice when replacing a pack.
   Activating into an occupied bin is now always a **rollover** (old pack → sold
