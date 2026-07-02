@@ -412,7 +412,7 @@
         '<div class="bin-top"><span class="bin-pill">' + esc(bin.name) + '</span>' +
           '<span class="gameno">' + esc(pack.gameNumber) + '</span></div>' +
         '<div class="game">' + esc(pack.name) + ' <span class="price">' + money(pack.price) + '</span></div>' +
-        '<div class="meta mono">pack ' + esc(pack.packNumber) + ' · sold ' + idx + ' / ' + tpp + '</div>' +
+        '<div class="meta mono">pack ' + esc(pack.packNumber) + ' · idx ' + idx + ' / ' + (tpp - 1) + '</div>' +
         '<div class="progress"><i style="width:' + pct + '%"></i></div>' +
         '<div class="stats">' +
           '<div class="stat"><div class="n">' + soldToday + '</div><div class="l">sold today</div></div>' +
@@ -1167,7 +1167,7 @@
       title: 'Update index — ' + esc(store.getBin(binId).name),
       bodyHTML:
         '<button class="btn primary block lg" id="ui-scanbtn">' + ICON.cam + ' Scan this bin\'s ticket</button>' +
-        '<div class="field" style="margin-top:16px"><label>Tickets sold (0–' + pack.ticketsPerPack + ')</label><input id="ui-idx" class="mono" value="' + (pack.currentIndex || 0) + '"></div>',
+        '<div class="field" style="margin-top:16px"><label>Current index (0–' + (pack.ticketsPerPack - 1) + ')</label><input id="ui-idx" class="mono" value="' + (pack.currentIndex || 0) + '"></div>',
       footHTML: '<button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn primary" id="ui-go">Save</button>',
       onMount: (root) => {
         const idx = root.querySelector('#ui-idx');
@@ -1325,7 +1325,7 @@
       const segs = day.bins[b.id].segments;
       const open = segs[segs.length - 1];
       return '<div class="field"><label>' + esc(b.name) + ' — ' + esc(open.name || open.gameNumber) +
-        ' <span class="muted">(start ' + open.startIndex + ', full ' + open.ticketsPerPack + ')</span></label>' +
+        ' <span class="muted">(start ' + open.startIndex + ', max ' + (open.ticketsPerPack - 1) + ')</span></label>' +
         '<input class="mono ed-end" data-bin="' + b.id + '" value="' + open.endIndex + '" placeholder="end index"></div>';
     }).join('');
     openModal({
